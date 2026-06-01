@@ -1,0 +1,6 @@
+{
+  "name": "mylib",
+  "version": "1.0.0",
+  "description": "My GitHub C++ library",
+  "dependencies": []
+}
