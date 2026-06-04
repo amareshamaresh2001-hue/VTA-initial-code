@@ -1,0 +1,14 @@
+{
+    "model_name": "resnet_101",
+    "en_ddr_lock": true,
+    "en_cache": false,
+    "en_prefetch": false,
+    "max_cache_mem_size": 3200,
+    "nr_load_pipeline": 1,
+    "nr_compute_pipeline": 1,
+    "nr_store_pipeline": 1,
+    "load_cycles": 80,
+    "load_weigts_cycles": 60,
+    "store_cycles": 80,
+    "granulatity": "layer"
+}
