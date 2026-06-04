@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VTA-Simulator — Build, Run &amp; Test Guide</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", Arial, sans-serif;
+    color: #1c2330; line-height: 1.5; font-size: 11pt; margin: 0;
+  }
+  h1 { font-size: 24pt; color: #0b3d91; margin: 0 0 4px; }
+  h2 {
+    font-size: 15pt; color: #0b3d91; margin: 22px 0 8px;
+    border-bottom: 2px solid #cdd9ef; padding-bottom: 4px; page-break-after: avoid;
+  }
+  h3 { font-size: 12.5pt; color: #14233b; margin: 16px 0 6px; page-break-after: avoid; }
+  p { margin: 6px 0; }
+  code, kbd {
+    font-family: "Cascadia Code", "Consolas", monospace; font-size: 9.7pt;
+    background: #eef1f6; padding: 1px 5px; border-radius: 4px; color: #9b1c5e;
+  }
+  pre {
+    background: #1e2433; color: #e7ecf5; padding: 11px 14px; border-radius: 7px;
+    font-family: "Cascadia Code","Consolas",monospace; font-size: 9.3pt; line-height: 1.45;
+    overflow-x: auto; white-space: pre-wrap; word-break: break-word; page-break-inside: avoid;
+  }
+  pre code { background: none; color: inherit; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 10pt; page-break-inside: avoid; }
+  th, td { border: 1px solid #c7d0de; padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: #e8eefb; color: #0b3d91; }
+  tr:nth-child(even) td { background: #f6f8fc; }
+  .lead { font-size: 11.5pt; color: #44506a; margin-top: 2px; }
+  .callout { border-left: 5px solid #0b8043; background: #eafaf0; padding: 9px 13px; border-radius: 5px; margin: 12px 0; page-break-inside: avoid; }
+  .warn { border-left: 5px solid #d93025; background: #fdeceb; padding: 9px 13px; border-radius: 5px; margin: 12px 0; page-break-inside: avoid; }
+  .tip  { border-left: 5px solid #1a73e8; background: #eaf1fd; padding: 9px 13px; border-radius: 5px; margin: 12px 0; page-break-inside: avoid; }
+  .step { background:#0b3d91; color:#fff; border-radius:50%; display:inline-block; width:22px; height:22px; text-align:center; line-height:22px; font-weight:bold; margin-right:6px; font-size:10pt; }
+  .hd-meta { color:#6b7689; font-size:10pt; margin-bottom: 14px; }
+  .nobreak { page-break-inside: avoid; }
+  ul, ol { margin: 6px 0 6px 22px; }
+  li { margin: 3px 0; }
+  .pagebreak { page-break-before: always; }
+  .small { font-size: 9.5pt; color:#5a6478; }
+  a { color: #1a73e8; text-decoration: none; }
+</style>
+</head>
+<body>
+
+<h1>VTA-Simulator — Build, Run &amp; Test Guide</h1>
+<p class="lead">A step-by-step manual for building the SystemC VTA simulator, running it on different
+inputs, and — most importantly — testing your own changes as you port <code>vta.h</code> / <code>vta.cc</code>
+(Vivado HLS) into SystemC.</p>
+<p class="hd-meta">Project: <code>E:\Uni Siegen\PEP\VTA-Simulator-main</code> &nbsp;•&nbsp; Platform: Windows 11 + VS&nbsp;Code + vcpkg</p>
+
+<div class="callout">
+<b>Read this first.</b> There are only three actions you ever repeat: <b>Build</b> → <b>Run</b> → <b>Check the output</b>.
+Everything in this guide is a variation of those three. The hard one-time setup (compiler, libraries) is already done.
+</div>
+
+<h2>0. What you are actually doing</h2>
+<p>The files <code>vta.h</code> and <code>vta.cc</code> in the <code>PEP</code> folder are the original
+<b>VTA hardware design written in Vivado HLS C++</b> (they use <code>ap_int</code>, <code>hls::stream</code>,
+and <code>#pragma HLS</code> — Xilinx-specific). Your job is to re-express that same hardware behaviour as
+<b>SystemC</b> inside <i>this</i> simulator project, which already provides the matching module skeletons.</p>
+
+<table>
+<tr><th>HLS function in <code>vta.cc</code></th><th>becomes this SystemC module in the project</th><th>files</th></tr>
+<tr><td><code>fetch()</code></td><td><code>Fetcher</code></td><td><code>include/simulation/fetcher.h</code>, <code>src/simulation/fetcher.cpp</code></td></tr>
+<tr><td><code>load()</code></td><td><code>LoadModule</code></td><td><code>include/simulation/load_module.h</code>, <code>src/simulation/load_module.cpp</code></td></tr>
+<tr><td><code>compute()</code></td><td><code>ComputeModule</code></td><td><code>include/simulation/compute_module.h</code>, <code>src/simulation/compute_module.cpp</code></td></tr>
+<tr><td><code>store()</code></td><td><code>StoreModule</code></td><td><code>include/simulation/store_module.h</code>, <code>src/simulation/store_module.cpp</code></td></tr>
+<tr><td><code>vta()</code> (wrapper)</td><td><code>VTA</code> (wires everything together)</td><td><code>include/simulation/vta.h</code>, <code>src/simulation/vta.cpp</code></td></tr>
+</table>
+<p>So "transforming and testing" means: <b>edit the SystemC module files, rebuild, run the simulator, and confirm
+the output still makes sense</b> (e.g. all layers still finish, timings are reasonable).</p>
+
+<h2>1. Project layout (where everything lives)</h2>
+<table>
+<tr><th>Path</th><th>What it is</th></tr>
+<tr><td><code>main.cpp</code></td><td>Entry point. Reads config, parses the model, starts the simulation.</td></tr>
+<tr><td><code>config/config.json</code></td><td><b>The input control file</b> — which model to run and all hardware settings.</td></tr>
+<tr><td><code>data/models/*.csv</code></td><td>Input models (resnet_18 / 34 / 50 / 101). Each row = one VTA instruction.</td></tr>
+<tr><td><code>include/simulation/</code></td><td>Module headers (the <code>.h</code> files you will edit).</td></tr>
+<tr><td><code>src/simulation/</code></td><td>Module implementations (the <code>.cpp</code> files you will edit).</td></tr>
+<tr><td><code>CMakeLists.txt</code></td><td><b>The build recipe.</b> Lists every <code>.cpp</code> that gets compiled. You edit this when you add a new file.</td></tr>
+<tr><td><code>CMakePresets.json</code></td><td>Tells CMake where the libraries are. Do not normally touch.</td></tr>
+<tr><td><code>build/</code></td><td>Compiler output. Contains <code>my_systemc.exe</code>. Safe to delete; regenerated on build.</td></tr>
+<tr><td><code>build.cmd</code></td><td>One-command build helper (terminal).</td></tr>
+</table>
+
+<h2>2. The core cycle: Build → Run → Check</h2>
+
+<h3><span class="step">A</span>Build (compile the code)</h3>
+<p><b>In VS Code:</b> press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> → type <code>CMake: Build</code> → Enter.
+(If asked for a preset, choose <b>vcpkg</b>.) A clean build of everything is <code>CMake: Clean Rebuild</code>.</p>
+<p><b>In a terminal</b> (from the project folder):</p>
+<pre><code>.\build.cmd</code></pre>
+<p>Success looks like <code>===== BUILD OK =====</code> or, if nothing changed, <code>ninja: no work to do</code>.
+Either means you are good to run.</p>
+
+<div class="warn"><b>If the build fails</b>, the terminal shows the file and line number of the first error
+(e.g. <code>compute_module.cpp(42): error C2065: ...</code>). Fix that line, build again. Always fix the
+<i>first</i> error first — later ones are often caused by it.</div>
+
+<h3><span class="step">B</span>Run (execute the simulation)</h3>
+<p><b>In VS Code:</b> press <kbd>F5</kbd> and choose <b>“Run VTA Simulator (Ninja build)”</b>. Output appears in the terminal panel.</p>
+<p><b>In a terminal:</b></p>
+<pre><code>.\build\my_systemc.exe</code></pre>
+<div class="tip"><b>Why it just works:</b> the two required DLLs (<code>libzmq-mt-4_3_5.dll</code> and
+<code>nlohmann_json_schema_validator.dll</code>) are copied next to the <code>.exe</code> in <code>build\</code>.
+If you ever delete <code>build\</code> and rebuild, re-copy them from
+<code>vcpkg\installed\x64-windows\bin\</code> (or just run from a terminal that has that folder on its <code>PATH</code>).</div>
+
+<h3><span class="step">C</span>Check the output</h3>
+<p>The simulator prints one line per network layer:</p>
+<pre><code>211040 ns      ---------------------------- FINISH LAYER 0 ----------------------------
+758676 ns      ---------------------------- FINISH LAYER 1 ----------------------------
+...
+58021575 ns    ---------------------------- FINISH LAYER 102 ---------------------------</code></pre>
+<p>The number is the <b>simulated hardware time in nanoseconds</b> at which that layer finished.
+The difference between two consecutive lines is that layer's latency. This is the result you compare
+before and after a change.</p>
+
+<div class="pagebreak"></div>
+<h2>3. Testing with different inputs</h2>
+<p>The "input" is chosen in <code>config/config.json</code>. The most important field is <code>model_name</code>.</p>
+
+<h3>Switch the model</h3>
+<ol>
+<li>Open <code>config/config.json</code>.</li>
+<li>Change <code>"model_name"</code> to one of: <code>resnet_18</code>, <code>resnet_34</code>, <code>resnet_50</code>, <code>resnet_101</code>.</li>
+<li>Save, then <b>Run</b> again (no rebuild needed — config is read at runtime).</li>
+</ol>
+<p>Smaller models (resnet_18) have fewer layers and finish faster — handy for quick tests.</p>
+
+<h3>What every config field means</h3>
+<table>
+<tr><th>Field</th><th>Meaning / effect on the simulation</th></tr>
+<tr><td><code>model_name</code></td><td>Which <code>data/models/&lt;name&gt;.csv</code> to simulate.</td></tr>
+<tr><td><code>granulatity</code></td><td><code>"layer"</code> or <code>"block"</code> — how instructions are grouped/reported.</td></tr>
+<tr><td><code>en_cache</code></td><td>Enable the on-chip cache model (changes memory timing).</td></tr>
+<tr><td><code>en_prefetch</code></td><td>Enable prefetching.</td></tr>
+<tr><td><code>en_ddr_lock</code></td><td>Model DRAM access locking/contention.</td></tr>
+<tr><td><code>max_cache_mem_size</code></td><td>Cache size budget used by the cache model.</td></tr>
+<tr><td><code>nr_load_pipeline</code> / <code>nr_compute_pipeline</code> / <code>nr_store_pipeline</code></td><td>How many parallel pipelines each stage has (more = more parallelism).</td></tr>
+<tr><td><code>load_cycles</code> / <code>load_weigts_cycles</code> / <code>store_cycles</code></td><td>Latency (in clock cycles) charged per load / weight-load / store operation. These directly drive the <code>ns</code> numbers.</td></tr>
+</table>
+
+<div class="tip"><b>Good test idea:</b> run the same model twice — once with <code>en_cache=false</code> and once with
+<code>en_cache=true</code> — and compare the layer timings. This shows the cache model is having an effect, and
+is a clean way to demonstrate the simulator to a supervisor.</div>
+
+<h3>Make a tiny test model (fast iteration)</h3>
+<p>The full ResNet CSVs are large. To test a change quickly, copy a model and keep only the first few rows:</p>
+<pre><code># PowerShell — create a 1-layer mini model from resnet_18
+$src = "data\models\resnet_18.csv"
+$dst = "data\models\mini.csv"
+Get-Content $src -TotalCount 60 | Set-Content $dst   # header + first ~59 instruction rows</code></pre>
+<p>Then set <code>"model_name": "mini"</code> in the config. It runs in a fraction of a second, so you can build-run-check many times while debugging a module.</p>
+
+<h2>4. The transformation workflow (porting HLS → SystemC)</h2>
+<p>This is the loop you will repeat while moving logic from <code>vta.cc</code> into the SystemC modules.</p>
+
+<h3><span class="step">1</span>Decide which module you are changing</h3>
+<p>Use the mapping table in section 0. E.g. porting the HLS <code>compute()</code> body → edit
+<code>include/simulation/compute_module.h</code> and <code>src/simulation/compute_module.cpp</code>.</p>
+
+<h3><span class="step">2</span>Edit the SystemC code</h3>
+<p>Translate HLS idioms to SystemC equivalents:</p>
+<table>
+<tr><th>HLS (vta.cc)</th><th>SystemC equivalent in this project</th></tr>
+<tr><td><code>hls::stream&lt;T&gt;</code> (FIFO)</td><td>a <code>Queue</code> module connected by <code>vld/rdy/data/end</code> signals</td></tr>
+<tr><td><code>ap_int&lt;N&gt;</code> / <code>ap_uint&lt;N&gt;</code></td><td><code>sc_int&lt;N&gt;</code> / <code>sc_uint&lt;N&gt;</code></td></tr>
+<tr><td><code>#pragma HLS PIPELINE</code> etc.</td><td>(ignore — pragmas are hardware-synthesis hints, not needed in simulation)</td></tr>
+<tr><td>function called once, returns</td><td>module process driven by <code>sc_event</code>s, reacting over simulated time</td></tr>
+<tr><td>dependence queues (<code>l2g</code>, <code>g2l</code>, <code>s2g</code>, <code>g2s</code>)</td><td>the <code>l2c</code> / <code>c2l</code> / <code>s2c</code> / <code>c2s</code> <code>Queue</code>s wired in <code>vta.cpp</code></td></tr>
+</table>
+
+<h3><span class="step">3</span>If you ADD a new <code>.cpp</code> file, register it in CMakeLists</h3>
+<p>The build only compiles files listed in <code>CMakeLists.txt</code>. Open it and add your new file inside the
+<code>add_executable(my_systemc ...)</code> list:</p>
+<pre><code>add_executable(my_systemc
+    main.cpp
+    src/utilities/utilities.cpp
+    ...
+    src/simulation/vta.cpp
+    src/simulation/arm.cpp
+    src/simulation/my_new_file.cpp      &lt;-- add your new .cpp here
+)</code></pre>
+<div class="warn"><b>Common mistake:</b> creating a new <code>.cpp</code> but forgetting to add it here. Symptom:
+<code>unresolved external symbol</code> (linker error) at the end of the build. Fix = add the file to the list above.
+(Header-only changes to existing <code>.h</code> files do <b>not</b> need a CMakeLists edit.)</div>
+<p>After editing <code>CMakeLists.txt</code>, run <b>CMake: Configure</b> once (VS Code does this automatically on save), then build.</p>
+
+<h3><span class="step">4</span>Rebuild and run</h3>
+<p>Build (section 2A) → Run (section 2B). Watch for compile errors first, then runtime behaviour.</p>
+
+<h3><span class="step">5</span>Verify the result (regression test)</h3>
+<p>Since the project has <b>no automated test suite</b>, you test by comparing output against a known-good baseline:</p>
+<pre><code># 1) BEFORE your change — capture a baseline (do this once, on the working version):
+.\build\my_systemc.exe &gt; baseline.txt
+
+# 2) AFTER your change — capture the new output:
+.\build\my_systemc.exe &gt; current.txt
+
+# 3) Compare them:
+Compare-Object (Get-Content baseline.txt) (Get-Content current.txt)</code></pre>
+<p>Interpretation:</p>
+<ul>
+<li><b>No differences</b> → your change preserved behaviour (good for a refactor that shouldn't change results).</li>
+<li><b>Timing numbers changed but all 0…N layers still finish</b> → expected if your change affects latency; check the new numbers are sensible.</li>
+<li><b>Fewer layers, a crash, or it hangs</b> → a regression; your change broke something. Re-check the edited module.</li>
+</ul>
+
+<h2>5. A repeatable test checklist</h2>
+<div class="nobreak">
+<p>Run through this every time you finish a transformation step:</p>
+<table>
+<tr><th>#</th><th>Check</th><th>Pass criteria</th></tr>
+<tr><td>1</td><td>It builds</td><td><code>BUILD OK</code> / exit code 0, no errors</td></tr>
+<tr><td>2</td><td>It runs without crashing</td><td>Process exits with code 0</td></tr>
+<tr><td>3</td><td>All layers finish</td><td>You see <code>FINISH LAYER 0</code> … up to the last layer of the model</td></tr>
+<tr><td>4</td><td>Timings are monotonic &amp; sensible</td><td>The <code>ns</code> values increase; no zero/negative/garbage values</td></tr>
+<tr><td>5</td><td>Works on more than one model</td><td>resnet_18 <i>and</i> resnet_50 both complete</td></tr>
+<tr><td>6</td><td>Matches baseline (if a pure refactor)</td><td><code>Compare-Object</code> shows no unexpected differences</td></tr>
+</table>
+</div>
+
+<h2>6. Troubleshooting</h2>
+<table>
+<tr><th>Symptom</th><th>Cause &amp; fix</th></tr>
+<tr><td><code>unresolved external symbol</code> at link time</td><td>A <code>.cpp</code> isn't in <code>CMakeLists.txt</code> (section 4, step 3), or a function is declared but not defined.</td></tr>
+<tr><td>App can't start: <code>...dll was not found</code></td><td>Run from <code>build\</code> (DLLs are there), or add <code>vcpkg\installed\x64-windows\bin</code> to <code>PATH</code>, or re-copy the two DLLs into <code>build\</code>.</td></tr>
+<tr><td>Build error <code>iostream: no include path set</code></td><td>The compiler environment isn't loaded. Use <code>build.cmd</code> (it calls <code>vcvars64</code>) or build via VS Code's CMake Tools.</td></tr>
+<tr><td><code>Error opening file: ...csv</code> / model not found</td><td>The CSV must be at <code>data/models/&lt;model_name&gt;.csv</code>. Check the name in <code>config.json</code> matches a file there.</td></tr>
+<tr><td>CMake can't find SystemC / a library</td><td>The vcpkg preset isn't selected. In VS Code choose the <b>vcpkg</b> configure preset; or re-run <code>build.cmd</code>.</td></tr>
+<tr><td>Changed config but output is identical</td><td>You may have edited a copy. Confirm you saved <code>config/config.json</code> in the project root.</td></tr>
+</table>
+
+<h2>7. Quick reference (cheat sheet)</h2>
+<pre><code># Build (terminal)
+.\build.cmd
+
+# Run
+.\build\my_systemc.exe
+
+# Run and save output to a file
+.\build\my_systemc.exe &gt; run.txt
+
+# Switch model: edit config/config.json -> "model_name": "resnet_18"
+
+# Add a new source file: add it to add_executable(...) in CMakeLists.txt, then rebuild
+
+# Compare two runs (regression test)
+Compare-Object (Get-Content baseline.txt) (Get-Content current.txt)</code></pre>
+
+<div class="callout"><b>The one-sentence summary:</b> edit the SystemC module files → <code>build.cmd</code> (or
+VS Code Build) → <code>my_systemc.exe</code> → confirm all layers finish with sensible <code>ns</code> timings,
+comparing against a saved baseline.</div>
+
+<p class="small">Generated for the VTA-Simulator project. Keep this file in <code>docs/</code> for future reference.</p>
+
+</body>
+</html>
