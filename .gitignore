@@ -1,0 +1,33 @@
+# Build folders
+/build/
+/out/
+/bin/
+/lib/
+
+# CMake files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+Makefile
+
+# Ninja
+.ninja_deps
+.ninja_log
+build.ninja
+
+# vcpkg local clone + built packages (multi-GB — must NOT be committed)
+/vcpkg/
+
+# Generated/staged data: large model CSVs and simulation output folders
+/data/
+
+# Run artifacts / logs
+*.log
+baseline.txt
+current.txt
+
+# Local tooling config (not project code)
+/.claude/
+
+# Note: .vscode/ is intentionally tracked — it carries the build & run setup.
