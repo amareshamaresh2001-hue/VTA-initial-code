@@ -22,11 +22,90 @@ public:
     sc_out<sc_int<64>> push_prev_data;
     sc_out<bool> push_prev_end;
     
+    // =========================================================================
+    // --- STAGE 2: AXI HARDWARE INTEGRATION PORTS ---
+    // The following ports allow this StoreModule to act as an AXI Master.
+    // It will push completed neural network calculations back into main memory.
+    // =========================================================================
+
+    // ACLK (AXI Clock): The global system clock that synchronizes all AXI transfers.
+    sc_in<bool> ACLK;
+
+    // ARESETN (AXI Reset, Active Low): Resets the AXI state machine when pulled to 0.
+    sc_in<bool> ARESETN;
+
+    // START_ADDR: The dynamic starting memory address assigned to this module by the
+    // Time-Triggered Dispatcher. Tells the Store module exactly where it is safe to write.
+    sc_in<sc_uint<32>> START_ADDR; 
+
+    // --- AXI ADDRESS WRITE CHANNEL (AW) ---
+    // Used by the Store module to tell the memory *where* it is about to write data.
+
+    // AWADDR (Address Write): The 32-bit physical address the module wants to write to.
+    sc_out<sc_uint<32>> AWADDR; 
+
+    // AWLEN (Address Write Length): Defines how many data beats (bursts) are in this transfer.
+    sc_out<sc_uint<8>>  AWLEN;
+
+    // AWVALID (Address Write Valid): The Store module sets this HIGH (1) to announce: 
+    // "I have placed a valid address on AWADDR. Please prepare to receive data."
+    sc_out<bool>        AWVALID;
+
+    // AWREADY (Address Write Ready): The Arbiter sets this HIGH (1) to tell the Store module:
+    // "I have accepted your address. You can begin sending the data now."
+    sc_in<bool>         AWREADY;
+
+    // --- AXI DATA WRITE CHANNEL (W) ---
+    // Used by the Store module to send the actual computed data to the memory.
+
+    // WDATA (Write Data): The 32-bit chunk of actual calculated neural network data.
+    sc_out<sc_uint<32>> WDATA;
+
+    // WVALID (Write Valid): The Store module sets this HIGH (1) to announce:
+    // "I have placed valid data on the WDATA wire. Please capture it."
+    sc_out<bool>        WVALID;
+
+    // WREADY (Write Ready): The Memory sets this HIGH (1) to tell the Store module:
+    // "I have successfully captured the data you sent."
+    sc_in<bool>         WREADY;
+
+    // WLAST (Write Last): The Store module sets this HIGH (1) during the final data beat,
+    // signaling to the Memory and Arbiter that it is finished writing for this burst.
+    sc_out<bool>        WLAST;
+
+    // --- AXI WRITE RESPONSE CHANNEL (B) ---
+    // Used by the memory to confirm the entire burst write was successful.
+
+    // BRESP (Write Response): Status of the write (e.g., OKAY, ERROR).
+    sc_in<sc_uint<2>>   BRESP;
+
+    // BVALID (Response Valid): The Memory sets this HIGH (1) to announce:
+    // "I have finished processing your burst write, here is the final status."
+    sc_in<bool>         BVALID;
+
+    // BREADY (Response Ready): The Store module sets this HIGH (1) to tell the Memory:
+    // "I am ready to receive your final confirmation."
+    sc_out<bool>        BREADY;
+
+
     SC_HAS_PROCESS(StoreModule);
 
     StoreModule(sc_module_name n);
 
 private:
+
+    // =========================================================================
+    // --- STAGE 2: AXI TO EVENT-DRIVEN BRIDGE ---
+    // We cannot use wait() inside dependencies_received() because it is an SC_METHOD.
+    // Therefore, we use this sc_event to wake up a separate SC_THREAD that handles AXI.
+    // =========================================================================
+
+    // start_axi_write: This event is fired by dependencies_received() when there is data to store.
+    sc_event start_axi_write;
+
+    // axi_write_thread: A clock-driven SystemC thread. It sleeps until start_axi_write is triggered.
+    // Once awake, it handles the complex multi-cycle AXI write handshakes.
+    void axi_write_thread();
 
     sc_int<64> *prev_data = nullptr;
 

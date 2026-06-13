@@ -4,7 +4,9 @@
 VTA::VTA(
     sc_module_name n,
     const std::vector<std::string>& keys,
-    const std::map<std::string, std::vector<std::tuple<InstrType, sc_int<64>, sc_int<64>>>>& encoded_splited_instructions) : sc_module(n) {
+    const std::map<std::string, std::vector<std::tuple<InstrType, sc_int<64>, sc_int<64>>>>& encoded_splited_instructions) 
+    : sc_module(n), sys_clk("sys_clk", 10, SC_NS) { // Instantiate 10ns clock
+    
     arm = new ARM("ARM");
     fetcher = new Fetcher("Fetcher", keys, encoded_splited_instructions);
 
@@ -15,6 +17,52 @@ VTA::VTA(
     load = new LoadModule("Load");
     compute = new ComputeModule("Compute");
     store = new StoreModule("Store");
+
+    // =========================================================================
+    // --- STAGE 2: AXI HARDWARE INSTANTIATION & WIRING ---
+    // =========================================================================
+
+    // Turn off Reset (Active Low) so the hardware turns on immediately
+    sys_reset.write(1);
+
+    // Provide default dynamic config values for now.
+    // In Stage 3, the Dispatcher would drive these.
+    sys_cfg_width.write(16);
+    sys_cfg_stride.write(16);
+    sys_start_m0.write(0x00000000);
+    sys_start_m2.write(0x00008000);
+    
+    // --- INSTANTIATE MAIN MEMORY ---
+    dram = new axi_lite_slave("main_memory"); 
+    dram->ACLK(sys_clk); 
+    dram->ARESETN(sys_reset);
+    dram->CFG_WIDTH(sys_cfg_width);
+    dram->CFG_STRIDE(sys_cfg_stride);
+    
+    // Connect Memory to global traces
+    dram->AWADDR(sys_AWADDR); dram->AWVALID(sys_AWVALID); dram->AWREADY(sys_AWREADY); dram->AWLEN(sys_AWLEN);
+    dram->WDATA(sys_WDATA);   dram->WVALID(sys_WVALID);   dram->WREADY(sys_WREADY);   dram->WLAST(sys_WLAST);
+    dram->BRESP(sys_BRESP);   dram->BVALID(sys_BVALID);   dram->BREADY(sys_BREADY);
+    dram->ARADDR(sys_ARADDR); dram->ARVALID(sys_ARVALID); dram->ARREADY(sys_ARREADY); dram->ARLEN(sys_ARLEN);
+    dram->RDATA(sys_RDATA);   dram->RRESP(sys_RRESP);     dram->RVALID(sys_RVALID);   dram->RREADY(sys_RREADY); dram->RLAST(sys_RLAST);
+
+    // --- SOLDER LOAD MODULE TO MEMORY READ CHANNELS ---
+    load->ACLK(sys_clk);
+    load->ARESETN(sys_reset);
+    load->START_ADDR(sys_start_m0);
+    load->ARADDR(sys_ARADDR); load->ARLEN(sys_ARLEN); load->ARVALID(sys_ARVALID); load->RREADY(sys_RREADY);
+    load->ARREADY(sys_ARREADY); load->RVALID(sys_RVALID); load->RLAST(sys_RLAST); load->RDATA(sys_RDATA); load->RRESP(sys_RRESP);
+
+    // --- SOLDER STORE MODULE TO MEMORY WRITE CHANNELS ---
+    store->ACLK(sys_clk);
+    store->ARESETN(sys_reset);
+    store->START_ADDR(sys_start_m2);
+    store->AWADDR(sys_AWADDR); store->AWLEN(sys_AWLEN); store->AWVALID(sys_AWVALID);
+    store->AWREADY(sys_AWREADY);
+    store->WDATA(sys_WDATA); store->WVALID(sys_WVALID); store->WLAST(sys_WLAST); store->WREADY(sys_WREADY);
+    store->BRESP(sys_BRESP); store->BVALID(sys_BVALID); store->BREADY(sys_BREADY);
+
+    // =========================================================================
 
     l2c_queue = new Queue("l2c", false);
     c2l_queue = new Queue("c2l", false);
@@ -173,7 +221,8 @@ VTA::VTA(
     c2s_queue->out_end(c2s_store_end_sig);
     store->pull_prev_end(c2s_store_end_sig);
 
-    SC_METHOD(start);
+    SC_METHOD(start); // <-- RESTORED: Must be an SC_METHOD so SystemC schedules it correctly
+    SC_THREAD(power_on_sequence); // --- STAGE 2: REGISTER POWER-ON THREAD ---
 }
 
 void VTA::start() {
@@ -181,4 +230,21 @@ void VTA::start() {
     compute->start();
     store->start();
     arm->start();
+}
+
+// =========================================================================
+// --- STAGE 2: POWER-ON RESET SEQUENCE ---
+// This thread handles the hardware boot-up. It pulls the Reset line LOW,
+// waits for the clock to stabilize, and then releases the Reset.
+// =========================================================================
+void VTA::power_on_sequence() {
+    // 1. Initial State: Assert Reset (Active Low = 0)
+    sys_reset.write(0);
+    
+    // 2. Wait for 100ns (10 clock cycles) to let the signals stabilize
+    wait(100, SC_NS);
+    
+    // 3. Release Reset (Active Low = 1)
+    std::cout << "\n[SYSTEM] AXI Bus Reset Released. Power-On Complete." << std::endl;
+    sys_reset.write(1);
 }

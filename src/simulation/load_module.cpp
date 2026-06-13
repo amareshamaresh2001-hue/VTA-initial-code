@@ -1,7 +1,28 @@
 #include "load_module.h"
+#include "vta_config.h"
+
+// =========================================================================
+// --- STAGE 2: EXTERNAL SRAM ARRAYS ---
+// The following arrays are physically located in the Compute module.
+// By declaring them 'extern', the Load module can access them to store 
+// the neural network inputs and weights it fetches from the AXI memory.
+// =========================================================================
+constexpr int VTA_BLOCK_IN  = 16;
+constexpr int VTA_BLOCK_OUT = 16;
+constexpr int INP_BUFF_DEPTH = (1 << vta_config::UOP_SRC_WIDTH); // 2048
+constexpr int WGT_BUFF_DEPTH = (1 << vta_config::UOP_WGT_WIDTH); // 1024
+
+extern int8_t inp_mem[INP_BUFF_DEPTH][VTA_BLOCK_IN];  
+extern int8_t wgt_mem[WGT_BUFF_DEPTH][VTA_BLOCK_OUT * VTA_BLOCK_IN]; 
 
 
 LoadModule::LoadModule(sc_module_name n) : Module(n) {
+
+    // --- STAGE 2: REGISTER AXI READ THREAD ---
+    // We register the new axi_read_thread as an SC_THREAD so it can use wait()
+    // to synchronize with the AXI clock. It is sensitive to the positive edge of ACLK.
+    SC_THREAD(axi_read_thread);
+    sensitive << ACLK.pos();
 
     SC_METHOD(activate_push_next_vld_handler);
     dont_initialize();
@@ -73,7 +94,199 @@ void LoadModule::receive_dependencies() { //
 void LoadModule::dependencies_received() { //
     // std::cout << sc_time_stamp() << " START LOAD ID=" << current->id << std::endl;
     // std::cout << sc_time_stamp() << " " << this->name() << " START EXECUTING " << current->get_layer() << " " << current->get_pc() << std::endl;
-    finish.notify(latency());
+    
+    // --- STAGE 2: AXI TRIGGER ---
+    // Instead of finishing immediately or using memcpy, we trigger our new AXI thread.
+    // This bridges our event-driven architecture with the cycle-accurate hardware.
+    start_axi_read.notify(SC_ZERO_TIME);
+}
+
+// =========================================================================
+// --- STAGE 2: AXI READ THREAD IMPLEMENTATION ---
+// This is the cycle-accurate hardware model for the Load module.
+// It uses 4-beat bursts to remain compatible with the teammate's Memory.
+// =========================================================================
+void LoadModule::axi_read_thread() {
+    // 0. HARDWARE INITIALIZATION
+    ARVALID.write(0); 
+    RREADY.write(0);
+
+    while (true) {
+        // 1. SLEEP UNTIL INSTRUCTION ARRIVES
+        wait(start_axi_read);
+
+        std::string name = current->get_name();
+        
+        if (name == "LOAD INP" || name == "LOAD WGT") {
+            
+            try {
+                std::string sram_str = current->get_sram();
+                uint32_t sram_base = sram_str.empty() ? 0 : std::stoul(sram_str, nullptr, 16);
+                uint32_t y_size = current->get_y_size();
+                uint32_t x_size = current->get_x_size();
+                uint32_t stride = current->get_stride();
+                
+                // --- NEW: Tensor Padding Parameters ---
+                uint32_t y0_pad = current->get_y0_pad();
+                uint32_t y1_pad = current->get_y1_pad();
+                uint32_t x0_pad = current->get_x0_pad();
+                uint32_t x1_pad = current->get_x1_pad();
+
+                if (x_size == 0 || y_size == 0) {
+                    finish.notify(latency());
+                    continue;
+                }
+
+                sc_uint<32> current_address = START_ADDR.read(); 
+                uint32_t sram_idx = sram_base;
+                uint32_t x_width = x0_pad + x_size + x1_pad;
+
+                if (name == "LOAD INP") {
+                    // ==========================================
+                    // 1. TOP PADDING (y0_pad rows)
+                    // ==========================================
+                    uint32_t top_pad_tiles = y0_pad * x_width;
+                    for (uint32_t i = 0; i < top_pad_tiles; i++) {
+                        if (sram_idx < INP_BUFF_DEPTH) {
+                            for (int c = 0; c < 16; c++) inp_mem[sram_idx][c] = 0;
+                        }
+                        sram_idx++;
+                    }
+
+                    // ==========================================
+                    // 2. 2D DMA TRANSFER WITH ROW PADDING
+                    // ==========================================
+                    for (uint32_t y = 0; y < y_size; y++) {
+                        
+                        // --- Left Padding ---
+                        for (uint32_t i = 0; i < x0_pad; i++) {
+                            if (sram_idx < INP_BUFF_DEPTH) {
+                                for (int c = 0; c < 16; c++) inp_mem[sram_idx][c] = 0;
+                            }
+                            sram_idx++;
+                        }
+
+                        // --- AXI Data Fetch ---
+                        uint32_t beats_processed = 0;
+                        while (beats_processed < x_size) {
+                            std::cout << "[LOAD] Requesting AXI Bus for " << name << "..." << std::endl;
+                            
+                            ARADDR.write(current_address + (beats_processed * 4)); 
+                            ARLEN.write(3); 
+                            ARVALID.write(1);
+                            
+                            int ar_timeout = 0;
+                            do { 
+                                wait(); 
+                                ar_timeout++;
+                                if (ar_timeout > 20) break;
+                            } while (ARREADY.read() == 0);
+                            ARVALID.write(0);
+                            std::cout << "[LOAD] AXI Bus Granted! Reading data..." << std::endl;
+
+                            int chunk_count = 0;
+                            RREADY.write(0); 
+                            
+                            while (chunk_count < 4) {
+                                wait(); 
+                                if (RVALID.read() == 1) {
+                                    RREADY.write(1);
+                                    wait(); 
+                                    
+                                    uint32_t data_chunk = RDATA.read().to_uint();
+                                    
+                                    if (sram_idx < INP_BUFF_DEPTH) {
+                                        inp_mem[sram_idx][0] = (data_chunk >> 0) & 0xFF;
+                                        inp_mem[sram_idx][1] = (data_chunk >> 8) & 0xFF;
+                                        inp_mem[sram_idx][2] = (data_chunk >> 16) & 0xFF;
+                                        inp_mem[sram_idx][3] = (data_chunk >> 24) & 0xFF;
+                                    }
+                                    
+                                    chunk_count++;
+                                    sram_idx++; // Increment linear SRAM pointer
+                                    RREADY.write(0); 
+                                }
+                            }
+                            beats_processed += 4;
+                            std::cout << "[LOAD] " << name << " chunk complete." << std::endl;
+                        }
+                        
+                        current_address += stride;
+
+                        // --- Right Padding ---
+                        for (uint32_t i = 0; i < x1_pad; i++) {
+                            if (sram_idx < INP_BUFF_DEPTH) {
+                                for (int c = 0; c < 16; c++) inp_mem[sram_idx][c] = 0;
+                            }
+                            sram_idx++;
+                        }
+                    }
+
+                    // ==========================================
+                    // 3. BOTTOM PADDING (y1_pad rows)
+                    // ==========================================
+                    uint32_t bot_pad_tiles = y1_pad * x_width;
+                    for (uint32_t i = 0; i < bot_pad_tiles; i++) {
+                        if (sram_idx < INP_BUFF_DEPTH) {
+                            for (int c = 0; c < 16; c++) inp_mem[sram_idx][c] = 0;
+                        }
+                        sram_idx++;
+                    }
+                } 
+                else if (name == "LOAD WGT") {
+                    // Standard 2D load without padding
+                    for (uint32_t y = 0; y < y_size; y++) {
+                        uint32_t beats_processed = 0;
+                        while (beats_processed < x_size) {
+                            std::cout << "[LOAD] Requesting AXI Bus for " << name << "..." << std::endl;
+                            ARADDR.write(current_address + (beats_processed * 4)); 
+                            ARLEN.write(3); 
+                            ARVALID.write(1);
+                            
+                            int ar_timeout = 0;
+                            do { 
+                                wait(); 
+                                ar_timeout++;
+                                if (ar_timeout > 20) break;
+                            } while (ARREADY.read() == 0);
+                            ARVALID.write(0);
+                            std::cout << "[LOAD] AXI Bus Granted! Reading data..." << std::endl;
+
+                            int chunk_count = 0;
+                            RREADY.write(0); 
+                            
+                            while (chunk_count < 4) {
+                                wait(); 
+                                if (RVALID.read() == 1) {
+                                    RREADY.write(1);
+                                    wait(); 
+                                    
+                                    uint32_t data_chunk = RDATA.read().to_uint();
+                                    
+                                    if (sram_idx < WGT_BUFF_DEPTH) {
+                                        wgt_mem[sram_idx][0] = (data_chunk >> 0) & 0xFF;
+                                        wgt_mem[sram_idx][1] = (data_chunk >> 8) & 0xFF;
+                                        wgt_mem[sram_idx][2] = (data_chunk >> 16) & 0xFF;
+                                        wgt_mem[sram_idx][3] = (data_chunk >> 24) & 0xFF;
+                                    }
+                                    
+                                    chunk_count++;
+                                    sram_idx++; // Increment linear SRAM pointer
+                                    RREADY.write(0); 
+                                }
+                            }
+                            beats_processed += 4;
+                            std::cout << "[LOAD] " << name << " chunk complete." << std::endl;
+                        }
+                        current_address += stride;
+                    }
+                }
+            } catch (...) {
+                std::cout << "[AXI READ ERROR] Failed to parse memory addresses." << std::endl;
+            }
+        }
+        finish.notify(latency());
+    }
 }
 
 void LoadModule::finalize_instruction() { //

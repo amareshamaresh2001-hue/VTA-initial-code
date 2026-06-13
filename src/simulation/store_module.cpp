@@ -1,7 +1,22 @@
 #include "store_module.h"
+#include "vta_config.h"
+
+// =========================================================================
+// --- STAGE 2: EXTERNAL SRAM ARRAYS ---
+// By declaring this 'extern', the Store module can access the results computed
+// by the Compute module and send them across the AXI bus back to main memory.
+// =========================================================================
+constexpr int VTA_BLOCK_OUT = 16;
+constexpr int ACC_BUFF_DEPTH = (1 << vta_config::UOP_DST_WIDTH); // 2048
+
+extern int8_t out_mem[ACC_BUFF_DEPTH][VTA_BLOCK_OUT];
 
 
 StoreModule::StoreModule(sc_module_name n) : Module(n) {
+
+    // --- STAGE 2: REGISTER AXI WRITE THREAD ---
+    SC_THREAD(axi_write_thread);
+    sensitive << ACLK.pos();
 
     SC_METHOD(activate_push_prev_vld_handler);
     dont_initialize();
@@ -66,9 +81,113 @@ void StoreModule::receive_dependencies() {
 }
 
 void StoreModule::dependencies_received() {
+    std::string name = current->get_name();
+    std::cout << "[STORE] dependencies_received for " << name << " (PC: " << current->get_pc() << ")" << std::endl;
     // std::cout << sc_time_stamp() << " START STORE ID=" << current->id << std::endl;
     // std::cout << sc_time_stamp() << " " << this->name() << " START EXECUTING " << current->get_layer() << " " << current->get_pc() << std::endl;
-    finish.notify(latency());
+    
+    // --- STAGE 2: AXI TRIGGER ---
+    // Instead of finishing immediately, trigger the AXI write thread to push data back to DRAM.
+    start_axi_write.notify(SC_ZERO_TIME);
+}
+
+// =========================================================================
+// --- STAGE 2: AXI WRITE THREAD IMPLEMENTATION ---
+// This is the cycle-accurate hardware model for the Store module.
+// It uses 4-beat bursts to remain compatible with the teammate's Memory.
+// =========================================================================
+void StoreModule::axi_write_thread() {
+    // 0. HARDWARE INITIALIZATION
+    AWVALID.write(0); 
+    WVALID.write(0); 
+    WLAST.write(0); 
+    BREADY.write(0);
+
+    while (true) {
+        // 1. SLEEP UNTIL INSTRUCTION ARRIVES
+        wait(start_axi_write);
+
+        std::string name = current->get_name();
+        
+        // Only proceed if this is actually a STORE instruction (Parser names it "STORE STORE")
+        if (name.find("STORE") != std::string::npos && name != "NOP-STORE-STAGE") {
+            
+            try {
+                std::string sram_str = current->get_sram();
+                uint32_t sram_base = sram_str.empty() ? 0 : std::stoul(sram_str, nullptr, 16);
+                uint32_t y_size = current->get_y_size();
+                uint32_t x_size = current->get_x_size();
+                uint32_t stride = current->get_stride();
+
+                if (x_size == 0 || y_size == 0) {
+                    finish.notify(latency());
+                    continue;
+                }
+
+                sc_uint<32> current_address = START_ADDR.read(); 
+
+                // 2. 2D DMA TRANSFER LOOP
+                for (uint32_t y = 0; y < y_size; y++) {
+                    
+                    uint32_t beats_processed = 0;
+                    
+                    while (beats_processed < x_size) {
+                        std::cout << "[STORE] Requesting AXI Bus for STORE..." << std::endl;
+                        
+                        // --- AXI ADDRESS PHASE ---
+                        AWADDR.write(current_address + (beats_processed * 4)); 
+                        AWLEN.write(3); // Always 4 beats
+                        AWVALID.write(1);
+                        
+                        do { wait(); } while (AWREADY.read() == 0);
+                        AWVALID.write(0);
+                        std::cout << "[STORE] AXI Bus Granted! Writing data..." << std::endl;
+
+                        // --- AXI DATA PHASE ---
+                        for (uint32_t i = 0; i < 4; i++) {
+                            uint32_t sram_idx = sram_base + (y * x_size) + beats_processed + i;
+                            uint32_t data_chunk = 0;
+                            
+                            if (sram_idx < ACC_BUFF_DEPTH) {
+                                data_chunk |= ((uint32_t)out_mem[sram_idx][0] & 0xFF) << 0;
+                                data_chunk |= ((uint32_t)out_mem[sram_idx][1] & 0xFF) << 8;
+                                data_chunk |= ((uint32_t)out_mem[sram_idx][2] & 0xFF) << 16;
+                                data_chunk |= ((uint32_t)out_mem[sram_idx][3] & 0xFF) << 24;
+                            }
+
+                            // Delay WVALID until memory signals WREADY=1 to prevent race conditions
+                            while (WREADY.read() == 0) { wait(); }
+                            
+                            WDATA.write(data_chunk); 
+                            WVALID.write(1);
+                            if (i == 3) WLAST.write(1); else WLAST.write(0);
+                            
+                            wait(); // Allow memory to consume the data on this clock edge
+                            
+                            // Deassert valid after successful handshake beat
+                            WVALID.write(0); 
+                            WLAST.write(0);
+                        }
+
+                        // --- AXI RESPONSE PHASE ---
+                        BREADY.write(0);
+                        while (BVALID.read() == 0) { wait(); }
+                        BREADY.write(1);
+                        wait(); // Allow memory to see BREADY
+                        BREADY.write(0);
+
+                        beats_processed += 4;
+                        std::cout << "[STORE] STORE chunk complete." << std::endl;
+                    }
+                    
+                    current_address += stride; 
+                }
+            } catch (...) {
+                std::cout << "[AXI WRITE ERROR] Failed to parse memory addresses." << std::endl;
+            }
+        }
+        finish.notify(latency());
+    }
 }
 
 void StoreModule::finalize_instruction() {

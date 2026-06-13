@@ -8,6 +8,10 @@
 #include "store_module.h"
 #include "instruction.h"
 
+// --- STAGE 2: AXI HARDWARE IMPORTS ---
+#include "axi_interconnect.h"
+#include "axi_lite_slave.h"
+
 
 class VTA : public sc_module {
 public:
@@ -28,6 +32,64 @@ private:
     LoadModule *load;
     ComputeModule *compute;
     StoreModule *store;
+
+    // =========================================================================
+    // --- STAGE 2: AXI HARDWARE COMPONENTS ---
+    // These are the physical hardware blocks provided by the teammate.
+    // =========================================================================
+    axi_interconnect *arbiter;
+    axi_lite_slave *dram;
+    
+    sc_clock sys_clk;          // The global 10ns clock driving all AXI state machines
+    sc_signal<bool> sys_reset; // The global reset signal
+
+    // =========================================================================
+    // --- STAGE 2: AXI MOTHERBOARD WIRING (COPPER TRACES) ---
+    // We must declare physical signals (wires) to connect the ports of our modules.
+    // =========================================================================
+
+    // 1. Traces between the Arbiter and the Main Memory
+    sc_signal<sc_uint<32>> sys_AWADDR, sys_WDATA, sys_ARADDR, sys_RDATA;
+    sc_signal<sc_uint<8>>  sys_AWLEN, sys_ARLEN;
+    sc_signal<sc_uint<2>>  sys_BRESP, sys_RRESP;
+    sc_signal<bool> sys_AWVALID, sys_AWREADY, sys_WVALID, sys_WREADY, sys_WLAST;
+    sc_signal<bool> sys_BVALID, sys_BREADY, sys_ARVALID, sys_ARREADY;
+    sc_signal<bool> sys_RVALID, sys_RREADY, sys_RLAST;
+    
+    // Dynamic Memory Config traces (from Dispatcher/System to Memory)
+    sc_signal<int> sys_cfg_width;
+    sc_signal<int> sys_cfg_stride;
+
+    // 2. Traces for Master 0 (Load Module -> Arbiter)
+    sc_signal<sc_uint<32>> m0_AWADDR, m0_WDATA, m0_ARADDR, m0_RDATA;
+    sc_signal<sc_uint<8>>  m0_AWLEN, m0_ARLEN;
+    sc_signal<sc_uint<2>>  m0_BRESP, m0_RRESP;
+    sc_signal<bool> m0_AWVALID, m0_AWREADY, m0_WVALID, m0_WREADY, m0_WLAST;
+    sc_signal<bool> m0_BVALID, m0_BREADY, m0_ARVALID, m0_ARREADY;
+    sc_signal<bool> m0_RVALID, m0_RREADY, m0_RLAST;
+    sc_signal<bool> m0_AWLOCK, m0_ARLOCK; // Dispatcher lock pins
+    sc_signal<sc_uint<32>> sys_start_m0;  // Dynamic start address for Load
+
+    // 3. Traces for Master 1 (Compute Module -> Arbiter) [Currently Dummy Wires]
+    sc_signal<sc_uint<32>> m1_AWADDR, m1_WDATA, m1_ARADDR, m1_RDATA;
+    sc_signal<sc_uint<8>>  m1_AWLEN, m1_ARLEN;
+    sc_signal<sc_uint<2>>  m1_BRESP, m1_RRESP;
+    sc_signal<bool> m1_AWVALID, m1_AWREADY, m1_WVALID, m1_WREADY, m1_WLAST;
+    sc_signal<bool> m1_BVALID, m1_BREADY, m1_ARVALID, m1_ARREADY;
+    sc_signal<bool> m1_RVALID, m1_RREADY, m1_RLAST;
+    sc_signal<bool> m1_AWLOCK, m1_ARLOCK;
+
+    // 4. Traces for Master 2 (Store Module -> Arbiter)
+    sc_signal<sc_uint<32>> m2_AWADDR, m2_WDATA, m2_ARADDR, m2_RDATA;
+    sc_signal<sc_uint<8>>  m2_AWLEN, m2_ARLEN;
+    sc_signal<sc_uint<2>>  m2_BRESP, m2_RRESP;
+    sc_signal<bool> m2_AWVALID, m2_AWREADY, m2_WVALID, m2_WREADY, m2_WLAST;
+    sc_signal<bool> m2_BVALID, m2_BREADY, m2_ARVALID, m2_ARREADY;
+    sc_signal<bool> m2_RVALID, m2_RREADY, m2_RLAST;
+    sc_signal<bool> m2_AWLOCK, m2_ARLOCK; // Dispatcher lock pins
+    sc_signal<sc_uint<32>> sys_start_m2;  // Dynamic start address for Store
+
+    void power_on_sequence(); // --- STAGE 2: Power-On Reset ---
 
     Queue *l2c_queue;
     Queue *c2l_queue;
