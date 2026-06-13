@@ -1,0 +1,385 @@
+\documentclass[11pt,a4paper]{report}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{setspace}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{enumitem}
+
+\geometry{margin=1in}
+\onehalfspacing
+
+% Professional Colors for Technical Documentation
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.98,0.98,0.98}
+\definecolor{navyblue}{rgb}{0.0, 0.0, 0.5}
+
+\lstset{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{navyblue}\bfseries,
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\scriptsize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2,
+    language=C++,
+    morekeywords={sc_in, sc_out, sc_uint, sc_int, sc_module, SC_THREAD, SC_METHOD, sc_event, wait, int8_t, int32_t, uint32_t}
+}
+
+\title{
+    \Huge \textbf{Design and Implementation of a Functional AXI-Integrated SystemC Simulator for the Versatile Tensor Accelerator (VTA)}\\
+    \vspace{1.5cm}
+    \Large \textbf{A Comprehensive Technical Report and Study Guide}\\
+    \vspace{1cm}
+    \large University of Siegen\\
+    PEP Project - Advanced Embedded Systems Design
+}
+\author{PEP Project Team}
+\date{June 2026}
+
+\begin{document}
+
+\maketitle
+
+\chapter*{Abstract}
+This report presents an exhaustive technical analysis of the structural and functional upgrades performed on the Versatile Tensor Accelerator (VTA) simulator. We detail the transition from a skeletal timing-only model into a functionally accurate hardware-software co-design environment. The primary focus of this work is the manual implementation of AXI4-compliant hardware interfaces for memory orchestration and the development of a functional mathematical engine for General Matrix Multiplication (GEMM) and Arithmetic Logic Unit (ALU) operations. We provide a line-by-line autopsy of the source code for the Load, Compute, and Store modules, explaining the synchronization mechanisms required to bridge event-driven SystemC kernels with cycle-accurate hardware protocols. Finally, we document the resolution of critical architectural conflicts, specifically the delta-cycle race conditions and arbiter deadlocks encountered during hardware integration.
+
+\tableofcontents
+\newpage
+
+\chapter{Project Foundation and Architectural Evolution}
+
+\section{Historical Context: Main vs. Development}
+The project began with a high-level performance estimation model (the \texttt{main} branch). This initial version was capable of decoding a CSV-based instruction stream and calculating the theoretical time required for each layer based on hardcoded latency values. However, it was a "hollow" model: it lacked physical memory, it could not perform real mathematics, and it did not simulate actual hardware signal toggling.
+
+Our mission on the \texttt{development} branch was to "breathe life" into this model. We had to implement the functional core (the math) and the electrical interface (the memory bus).
+
+\section{The Core Pillars of the VTA Architecture}
+VTA is based on a decoupled access-execute architecture. This means data movement is separated from data processing. Our implementation maintains this separation across three physical SystemC modules:
+\begin{enumerate}
+    \item \textbf{LoadModule (The Access Port):} Pulls raw data (inputs/weights) from the external memory.
+    \item \textbf{ComputeModule (The Execute Engine):} Processes the data using high-speed, on-chip SRAM.
+    \item \textbf{StoreModule (The Result Port):} Pushes finished results back to the external world.
+\end{enumerate}
+
+\section{The Global Dataflow Journey}
+To understand the project, one must follow the journey of a single neural network instruction (e.g., a 2D Convolution):
+\begin{enumerate}[label=\alph*.]
+    \item \textbf{Instruction Capture:} The \texttt{Parser} reads a row from the \texttt{resnet\_101.csv}.
+    \item \textbf{Queueing:} The \texttt{Fetcher} pushes the instruction into the module-specific FIFOs.
+    \item \textbf{Dependency Checking:} The modules check the \texttt{l2c}, \texttt{c2l}, \texttt{s2c}, and \texttt{c2s} queues to ensure the data they need is ready.
+    \item \textbf{AXI Loading:} The \texttt{LoadModule} initiates an AXI Burst Read to pull tensors from the 64KB Main Memory.
+    \item \textbf{Functional Computation:} The \texttt{ComputeModule} performs GEMM dot-products or ALU element-wise additions.
+    \item \textbf{AXI Storing:} The \texttt{StoreModule} initiates an AXI Burst Write to commit the results.
+\end{enumerate}
+
+---
+
+\chapter{The SystemC Hardware Bridge}
+
+\section{The Event vs. Clock Conflict}
+A primary technical challenge in this project was the mismatch between simulation paradigms. 
+The VTA Simulator is \textbf{Event-Driven}. It uses \texttt{SC\_METHOD}s that execute instantly (in 0 nanoseconds) when a trigger occurs. 
+Physical memory, however, is \textbf{Clock-Driven}. It relies on a 10ns \texttt{ACLK}. Handshakes like AXI require the module to "wait" for multiple clock edges to complete a single transfer.
+
+\section{The Implementation of the Bridge}
+We solved this by implementing a "Bridge" architecture in every module. We kept the original \texttt{dependencies\_received()} function as a high-level trigger, but we added a low-level \texttt{SC\_THREAD} that handles the hardware signals.
+
+\subsection{Mechanism Walkthrough}
+\begin{enumerate}
+    \item \texttt{dependencies\_received()} is called by the SystemC kernel when a new instruction is ready.
+    \item It fires an \texttt{sc\_event} (e.g., \texttt{start\_axi\_read}).
+    \item The AXI thread (\texttt{axi\_read\_thread}), which was sleeping, immediately wakes up.
+    \item The thread enters the hardware loops, using the \texttt{wait()} command to synchronize with the \texttt{ACLK} rising edges.
+    \item Once the AXI bus finishes the transfer, the thread calls \texttt{finish.notify()}, returning control to the software simulator.
+\end{enumerate}
+
+---
+
+\chapter{Module 1: LoadModule Technical Autopsy}
+
+\section{Detailed Variable Definitions}
+Inside the Load module, we utilize several key variables to manage the AXI hardware interface:
+\begin{itemize}
+    \item \textbf{ACLK / ARESETN:} The global heartbeat and the emergency stop button for the hardware.
+    \item \textbf{START\_ADDR:} A dynamic 32-bit pin. This is driven by the system motherboard to tell the Load module exactly where its dedicated workspace in DRAM starts.
+    \item \textbf{ARADDR / ARVALID / ARREADY:} The Address Read channel. These pins allow the module to "knock" on the memory's door and ask for a specific data address.
+    \item \textbf{RDATA / RVALID / RREADY:} The Data Read channel. These pins handle the actual "delivery" of the 32-bit words from memory to the module.
+\end{itemize}
+
+\section{Line-by-Line Code Explanation (\texttt{dependencies\_received})}
+The Load module's entry point is extremely simple now:
+\begin{lstlisting}
+void LoadModule::dependencies_received() {
+    // This is the High-Level Software Trigger.
+    // Instead of doing the work here, we just wake up the hardware thread.
+    start_axi_read.notify(SC_ZERO_TIME);
+}
+\end{lstlisting}
+
+\section{Line-by-Line Code Explanation (\texttt{axi\_read\_thread})}
+This is where the actual hardware simulation happens.
+\begin{lstlisting}
+void LoadModule::axi_read_thread() {
+    // 1. Initial Reset: Force all control wires to 0 so the bus is clean.
+    ARVALID.write(0); 
+    RREADY.write(0);
+
+    while (true) {
+        // 2. Wait for the event from the software side.
+        wait(start_axi_read);
+
+        // 3. Extract dimensions from the decoded instruction.
+        uint32_t sram_base = std::stoul(current->get_sram(), nullptr, 16);
+        uint32_t y_size = current->get_y_size();
+        uint32_t x_size = current->get_x_size();
+        uint32_t stride = current->get_stride();
+
+        // 4. Capture the Dynamic Base Pointer from the START_ADDR pin.
+        sc_uint<32> current_address = START_ADDR.read(); 
+
+        // 5. 2D Tensor Padding (TOP)
+        // Before reading data, we must fill the 'y0_pad' rows with zeros.
+        // This simulates a hardware zero-injector.
+        uint32_t x_total_width = current->get_x0_pad() + x_size + current->get_x1_pad();
+        for (uint32_t i = 0; i < (current->get_y0_pad() * x_total_width); i++) {
+            for (int c = 0; c < 16; c++) inp_mem[sram_idx++][c] = 0;
+        }
+
+        // 6. MAIN 2D LOOP (Rows)
+        for (uint32_t y = 0; y < y_size; y++) {
+            // ... Left Padding Logic ...
+
+            // 7. AXI BURST (CHUNKING)
+            // The teammate's memory only supports 4-beat bursts. 
+            // We split a large 'x_size' request into multiple small 4-beat bursts.
+            uint32_t beats_processed = 0;
+            while (beats_processed < x_size) {
+                // PHASE A: ADDRESS HANDSHAKE
+                ARADDR.write(current_address + (beats_processed * 4)); 
+                ARVALID.write(1);
+                // Trap the code until the Arbiter says "Ready!"
+                do { wait(); } while (ARREADY.read() == 0);
+                ARVALID.write(0);
+
+                // PHASE B: DATA HANDSHAKE (DELAYED METHOD)
+                int chunk_count = 0;
+                while (chunk_count < 4) {
+                    wait(); // Sync with clock
+                    if (RVALID.read() == 1) { // Memory has data ready
+                        RREADY.write(1); // Master captures the data
+                        wait(); // Complete handshake
+                        uint32_t data = RDATA.read().to_uint();
+                        
+                        // UNPACKING: Split 32-bit word into four 8-bit bytes
+                        inp_mem[sram_idx][0] = (data >> 0) & 0xFF;
+                        inp_mem[sram_idx][1] = (data >> 8) & 0xFF;
+                        // ... and so on ...
+                        
+                        RREADY.write(0); 
+                        chunk_count++;
+                        sram_idx++;
+                    }
+                }
+                beats_processed += 4;
+            }
+            // 8. DYNAMIC STRIDE: Add the byte stride to move to the next row.
+            current_address += stride;
+        }
+        // 9. SIGNAL COMPLETION
+        finish.notify(latency());
+    }
+}
+\end{lstlisting}
+
+---
+
+\chapter{Module 2: ComputeModule Technical Autopsy}
+
+\section{The SRAM Architecture}
+The Compute module acts as the "Brain" of the accelerator. It processes data stored in five primary memory arrays:
+\begin{itemize}
+    \item \textbf{uop\_mem [2048]:} The micro-op program. It tells the GEMM core which tiles to multiply.
+    \item \textbf{inp\_mem [2048][16]:} Input activation SRAM (8-bit).
+    \item \textbf{wgt\_mem [1024][256]:} Weight SRAM (8-bit).
+    \item \textbf{acc\_mem [2048][16]:} Accumulator SRAM (32-bit). Used for high-precision intermediate sums.
+    \item \textbf{out\_mem [2048][16]:} Output SRAM (8-bit). Holds finished, truncated results.
+\end{itemize}
+
+\section{The GEMM Functional Logic (\texttt{dependencies\_received})}
+GEMM (General Matrix Multiplication) is implemented as a hierarchy of nested loops that mirror the physical hardware blocking.
+
+\begin{lstlisting}
+void ComputeModule::dependencies_received() {
+    if (name == "GEMM") {
+        // 1. Setup Offsets
+        int dst_offset_out = 0; // Moves through the Accumulator
+        int src_offset_out = 0; // Moves through the Input Tensor
+        int wgt_offset_out = 0; // Moves through the Weight Tensor
+
+        // 2. OUTER LOOP (Large Block Level)
+        for (int it_out = 0; it_out < current->get_outer_loop_iter(); it_out++) {
+            
+            // 3. INNER LOOP (Tile Level)
+            for (int it_in = 0; it_in < current->get_inner_loop_iter(); it_in++) {
+                
+                // 4. UOP LOOP (Instruction Level)
+                for (int upc = range_0; upc < range_1; upc++) {
+                    uint32_t uop = uop_mem[upc]; // Fetch Micro-Op
+                    
+                    // 5. BITFIELD DECODING: Extract the 11-bit indices
+                    int dst_idx = (uop & 0x7FF) + dst_offset_in;
+                    int src_idx = ((uop >> 11) & 0x7FF) + src_offset_in;
+                    int wgt_idx = ((uop >> 22) & 0x3FF) + wgt_offset_in;
+
+                    // 6. TENSOR MATH LOOP (16x16 Dot Product)
+                    for (int oc = 0; oc < 16; oc++) {
+                        int32_t accum = acc_mem[dst_idx][oc];
+                        int32_t tmp = 0;
+                        for (int ic = 0; ic < 16; ic++) {
+                            // Multiplication of two 8-bit integers
+                            tmp += (int32_t)(inp_mem[src_idx][ic] * wgt_mem[wgt_idx][oc*16+ic]);
+                        }
+                        accum += tmp; // Accumulate result
+                        
+                        // 7. QUANTIZATION AND STORAGE
+                        // Truncate 32-bit accumulator to 8-bit output
+                        acc_mem[dst_idx][oc] = current->get_reset_out() ? 0 : accum;
+                        out_mem[dst_idx][oc] = (int8_t)(accum & 0xFF);
+                    }
+                }
+                // 8. UPDATE STRIDE OFFSETS
+                dst_offset_in += current->get_gemm_inner_loop_acc();
+            }
+            dst_offset_out += current->get_gemm_outer_loop_acc();
+        }
+    }
+}
+\end{lstlisting}
+
+\section{Variable Meanings (The Math Key)}
+\begin{itemize}
+    \item \textbf{dst\_idx / src\_idx / wgt\_idx:} These are the "pointers" to specific 16x16 tiles inside our SRAM buffers.
+    \item \textbf{oc (Output Channel):} Iterates through the 16 elements of the result tile.
+    \item \textbf{ic (Input Channel):} Iterates through the 16 elements of the input tile to calculate the dot product.
+    \item \textbf{accum:} A critical 32-bit variable. If we used an 8-bit variable here, the multiplication of two 8-bit numbers would instantly overflow!
+    \item \textbf{\& 0xFF:} The bitwise AND mask. It keeps only the lowest 8 bits of the 32-bit sum, effectively performing hardware-style truncation.
+\end{itemize}
+
+---
+
+\chapter{Module 3: StoreModule Technical Autopsy}
+
+\section{Module Purpose}
+The StoreModule is the reverse of the LoadModule. It takes finished results from the \texttt{out\_mem} SRAM and pushes them back into the main memory using AXI Write Bursts.
+
+\section{Line-by-Line Code Explanation (\texttt{axi\_write\_thread})}
+\begin{lstlisting}
+void StoreModule::axi_write_thread() {
+    while (true) {
+        // 1. Triggered by Compute Module finishing
+        wait(start_axi_write);
+
+        if (name.find("STORE") != std::string::npos) {
+            // 2. Fetch hardware parameters
+            uint32_t sram_base = std::stoul(current->get_sram(), nullptr, 16);
+            sc_uint<32> current_address = START_ADDR.read();
+
+            for (uint32_t y = 0; y < y_size; y++) {
+                // 3. AXI WRITE ADDRESS PHASE
+                AWADDR.write(current_address);
+                AWVALID.write(1);
+                do { wait(); } while (AWREADY.read() == 0); // Wait for grant
+                AWVALID.write(0);
+
+                // 4. AXI WRITE DATA PHASE (PACKING)
+                for (int i = 0; i < 4; i++) {
+                    uint32_t data_chunk = 0;
+                    // PACKING ENGINE: Combine four 8-bit values into one 32-bit word
+                    data_chunk |= ((uint32_t)out_mem[sram_idx][0] & 0xFF) << 0;
+                    data_chunk |= ((uint32_t)out_mem[sram_idx][1] & 0xFF) << 8;
+                    data_chunk |= ((uint32_t)out_mem[sram_idx][2] & 0xFF) << 16;
+                    data_chunk |= ((uint32_t)out_mem[sram_idx][3] & 0xFF) << 24;
+
+                    WDATA.write(data_chunk);
+                    WVALID.write(1);
+                    if (i == 3) WLAST.write(1); // Final beat flag
+                    
+                    // THE HANDSHAKE
+                    do { wait(); } while (WREADY.read() == 0);
+                    WVALID.write(0);
+                    WLAST.write(0);
+                }
+
+                // 5. AXI RESPONSE PHASE (B Channel)
+                BREADY.write(1);
+                do { wait(); } while (BVALID.read() == 0); // Wait for confirmation
+                BREADY.write(0);
+            }
+        }
+        finish.notify(latency());
+    }
+}
+\end{lstlisting}
+
+\section{Variable Meanings (The Write Key)}
+\begin{itemize}
+    \item \textbf{AWVALID / AWREADY:} The "Request to Write" handshake.
+    \item \textbf{WDATA / WVALID / WREADY:} The "Pushing Data" handshake.
+    \item \textbf{WLAST:} A critical hardware signal. If you don't set this to 1 on the 4th beat, the memory will wait forever, causing a deadlock!
+    \item \textbf{data\_chunk:} The 32-bit temporary variable used to glue four 8-bit results together before sending them over the bus.
+\end{itemize}
+
+---
+
+\chapter{The Memory Integration Mastery}
+
+\section{The Design Philosophy}
+The core of our integration was the "Motherboard" approach in \texttt{vta.cpp}. Instead of using high-level C++ pointers, we treated the simulation like a literal physical PCB (Printed Circuit Board).
+
+\section{The Arbiter Deadlock: A Technical Analysis}
+During development, we encountered a severe bug in the teammate's \texttt{axi\_interconnect.h}. 
+\textbf{The Problem:} Her code had a "delta-cycle race condition." When our module finished a burst, it set \texttt{WLAST = 1}. Her memory slave saw this and instantly set \texttt{BVALID = 1}. However, because both happened in the same nanosecond, her Arbiter missed the signal entirely! The Arbiter thought the Load module was still using the bus, so it permanently ignored the Compute and Store modules.
+
+\section{The Engineering Solution: Direct Wiring}
+Since we were instructed not to modify the teammate's code, we implemented a robust bypass:
+\begin{itemize}
+    \item \textbf{The Load Connection:} We wired the Load module directly to the Read channels of the memory slave (\texttt{ARADDR, RDATA, RVALID}).
+    \item \textbf{The Store Connection:} We wired the Store module directly to the Write channels (\texttt{AWADDR, WDATA, BVALID}).
+\end{itemize}
+Because Load only Reads and Store only Writes, they are physically using different "pins" on the memory chip. They can never collide! This allowed us to keep the AXI handshakes 100\% cycle-accurate without the Arbiter deadlock.
+
+\chapter{Conclusion and Study Guide}
+The VTA Simulator is now a powerful educational tool. 
+\textbf{Key Concepts to Remember for the Supervisor:}
+\begin{itemize}
+    \item \textbf{SystemC Threads:} Used to model slow hardware behavior inside a fast simulator.
+    \item \textbf{AXI Handshakes:} The \texttt{VALID/READY} logic ensures no data is lost between different clock-speed components.
+    \item \textbf{Bitmasking:} Essential for decoding packed hardware instructions.
+    \item \textbf{Quantization:} The process of converting 32-bit accurate sums back into 8-bit bytes for efficiency.
+\end{itemize}
+
+By studying this guide and our source code, you can demonstrate a complete understanding of how a modern tensor accelerator physically moves and processes data.
+
+\end{document}

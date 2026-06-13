@@ -169,20 +169,15 @@ void LoadModule::axi_read_thread() {
                         // --- AXI Data Fetch ---
                         uint32_t beats_processed = 0;
                         while (beats_processed < x_size) {
-                            std::cout << "[LOAD] Requesting AXI Bus for " << name << "..." << std::endl;
                             
                             ARADDR.write(current_address + (beats_processed * 4)); 
                             ARLEN.write(3); 
                             ARVALID.write(1);
                             
-                            int ar_timeout = 0;
                             do { 
                                 wait(); 
-                                ar_timeout++;
-                                if (ar_timeout > 20) break;
                             } while (ARREADY.read() == 0);
                             ARVALID.write(0);
-                            std::cout << "[LOAD] AXI Bus Granted! Reading data..." << std::endl;
 
                             int chunk_count = 0;
                             RREADY.write(0); 
@@ -208,7 +203,6 @@ void LoadModule::axi_read_thread() {
                                 }
                             }
                             beats_processed += 4;
-                            std::cout << "[LOAD] " << name << " chunk complete." << std::endl;
                         }
                         
                         current_address += stride;
@@ -238,19 +232,14 @@ void LoadModule::axi_read_thread() {
                     for (uint32_t y = 0; y < y_size; y++) {
                         uint32_t beats_processed = 0;
                         while (beats_processed < x_size) {
-                            std::cout << "[LOAD] Requesting AXI Bus for " << name << "..." << std::endl;
                             ARADDR.write(current_address + (beats_processed * 4)); 
                             ARLEN.write(3); 
                             ARVALID.write(1);
                             
-                            int ar_timeout = 0;
                             do { 
                                 wait(); 
-                                ar_timeout++;
-                                if (ar_timeout > 20) break;
                             } while (ARREADY.read() == 0);
                             ARVALID.write(0);
-                            std::cout << "[LOAD] AXI Bus Granted! Reading data..." << std::endl;
 
                             int chunk_count = 0;
                             RREADY.write(0); 
@@ -276,7 +265,6 @@ void LoadModule::axi_read_thread() {
                                 }
                             }
                             beats_processed += 4;
-                            std::cout << "[LOAD] " << name << " chunk complete." << std::endl;
                         }
                         current_address += stride;
                     }

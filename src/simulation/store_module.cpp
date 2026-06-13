@@ -81,8 +81,6 @@ void StoreModule::receive_dependencies() {
 }
 
 void StoreModule::dependencies_received() {
-    std::string name = current->get_name();
-    std::cout << "[STORE] dependencies_received for " << name << " (PC: " << current->get_pc() << ")" << std::endl;
     // std::cout << sc_time_stamp() << " START STORE ID=" << current->id << std::endl;
     // std::cout << sc_time_stamp() << " " << this->name() << " START EXECUTING " << current->get_layer() << " " << current->get_pc() << std::endl;
     
@@ -132,7 +130,6 @@ void StoreModule::axi_write_thread() {
                     uint32_t beats_processed = 0;
                     
                     while (beats_processed < x_size) {
-                        std::cout << "[STORE] Requesting AXI Bus for STORE..." << std::endl;
                         
                         // --- AXI ADDRESS PHASE ---
                         AWADDR.write(current_address + (beats_processed * 4)); 
@@ -141,7 +138,6 @@ void StoreModule::axi_write_thread() {
                         
                         do { wait(); } while (AWREADY.read() == 0);
                         AWVALID.write(0);
-                        std::cout << "[STORE] AXI Bus Granted! Writing data..." << std::endl;
 
                         // --- AXI DATA PHASE ---
                         for (uint32_t i = 0; i < 4; i++) {
@@ -177,7 +173,6 @@ void StoreModule::axi_write_thread() {
                         BREADY.write(0);
 
                         beats_processed += 4;
-                        std::cout << "[STORE] STORE chunk complete." << std::endl;
                     }
                     
                     current_address += stride; 

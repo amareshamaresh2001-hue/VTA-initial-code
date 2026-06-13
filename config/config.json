@@ -1,5 +1,5 @@
 {
-    "model_name": "test_axi",
+    "model_name": "resnet_101",
     "en_ddr_lock": true,
     "en_cache": false,
     "en_prefetch": false,

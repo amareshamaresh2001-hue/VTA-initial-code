@@ -178,7 +178,6 @@ void ComputeModule::receive_dependencies() {
 void ComputeModule::dependencies_received() {
     // Extract the name of the current instruction to determine which operation to perform.
     std::string name = current->get_name();
-    std::cout << "[COMPUTE] dependencies_received for " << name << " (PC: " << current->get_pc() << ")" << std::endl;
 
     if (name == "FINISH") {
         // FINISH instruction: Indicates the end of a layer's execution.
