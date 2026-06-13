@@ -19,8 +19,9 @@ build.ninja
 # vcpkg local clone + built packages (multi-GB — must NOT be committed)
 /vcpkg/
 
-# Generated/staged data: large model CSVs and simulation output folders
-/data/
+# Generated/staged data: Allow models, but ignore simulation output folders
+/data/*
+!/data/models/
 
 # Run artifacts / logs
 *.log
