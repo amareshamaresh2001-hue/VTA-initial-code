@@ -2,18 +2,13 @@
 #define AXI_LITE_SLAVE_H
 
 #include <systemc.h>
-#include <cstdlib> // <-- NEW: Required for rand()
+#include <cstdlib> // Required for rand()
 
 enum fsm_state { state_idle, state_ready, state_burst_write, state_response };
 enum read_fsm { r_idle, r_burst };
 
 SC_MODULE(axi_lite_slave) {
     sc_in<bool> ACLK, ARESETN;
-    
-    // --- NEW: DYNAMIC CONFIGURATION PINS ---
-    // The Dispatcher will drive these pins to tell the memory the current matrix size
-    sc_in<int> CFG_WIDTH;  
-    sc_in<int> CFG_STRIDE; 
 
     // --- CHANNELS ---
     sc_in<sc_uint<32>> AWADDR; sc_in<bool> AWVALID; sc_out<bool> AWREADY; sc_in<sc_uint<8>> AWLEN;
@@ -28,14 +23,9 @@ SC_MODULE(axi_lite_slave) {
     
     sc_signal<fsm_state> write_state; sc_signal<read_fsm> read_state;
     
-    // --- Base + Stride Trackers ---
-    sc_uint<32> w_base_addr, current_w_addr; 
-    int w_x_count;
-    int active_w_width, active_w_stride; // <-- NEW: Holds the config during a write burst
-
-    sc_uint<32> r_base_addr, current_r_addr;
-    int r_x_count;
-    int active_r_width, active_r_stride; // <-- NEW: Holds the config during a read burst
+    // --- Linear Address Trackers ONLY ---
+    sc_uint<32> current_w_addr; 
+    sc_uint<32> current_r_addr;
 
     int write_delay_counter, read_delay_counter, read_burst_count;
 
@@ -50,14 +40,7 @@ SC_MODULE(axi_lite_slave) {
             case state_ready:
                 AWREADY.write(1); 
                 if (AWVALID.read() && AWREADY.read()) { 
-                    w_base_addr = AWADDR.read();     
-                    current_w_addr = w_base_addr;    
-                    w_x_count = 0;                   
-                    
-                    // <-- NEW: Capture the dynamic dimensions from the Dispatcher for this specific burst
-                    active_w_width = CFG_WIDTH.read();
-                    active_w_stride = CFG_STRIDE.read();
-
+                    current_w_addr = AWADDR.read();     
                     AWREADY.write(0); write_delay_counter = 0; write_state.write(state_burst_write); 
                 }
                 break;
@@ -75,15 +58,8 @@ SC_MODULE(axi_lite_slave) {
                             memory_array[current_w_addr + 3] = data.range(31, 24);
                         }
                         
+                        // Strict linear increment
                         current_w_addr += 4; 
-                        w_x_count += 4; 
-                        
-                        // <-- NEW: Use the dynamic width and stride
-                        if (w_x_count >= active_w_width) { 
-                            w_x_count = 0; 
-                            w_base_addr = w_base_addr + active_w_stride; 
-                            current_w_addr = w_base_addr;       
-                        }
                         
                         write_delay_counter = 0; 
                         if (WLAST.read() == 1) { WREADY.write(0); write_state.write(state_response); }
@@ -105,16 +81,9 @@ SC_MODULE(axi_lite_slave) {
 
         switch (read_state.read()) {
             case r_idle:
-                RVALID.write(0); RLAST.write(0);
+                RVALID.write(0); RLAST.write(0); // Delta-cycle fix safely retained
                 if (ARVALID.read() == 1) {
-                    r_base_addr = ARADDR.read();     
-                    current_r_addr = r_base_addr;    
-                    r_x_count = 0;                   
-                    
-                    // <-- NEW: Capture the dynamic dimensions from the Dispatcher for this specific burst
-                    active_r_width = CFG_WIDTH.read();
-                    active_r_stride = CFG_STRIDE.read();
-
+                    current_r_addr = ARADDR.read();    
                     ARREADY.write(1); read_burst_count = 0; read_delay_counter = 0; read_state.write(r_burst); 
                 } else { ARREADY.write(0); }
                 break;
@@ -135,18 +104,12 @@ SC_MODULE(axi_lite_slave) {
                     if (read_burst_count == 3) RLAST.write(1); else RLAST.write(0);
 
                     if (RREADY.read() == 1) {
+                        // Strict linear increment
                         current_r_addr += 4;
-                        r_x_count += 4;
-                        
-                        // <-- NEW: Use the dynamic width and stride
-                        if (r_x_count >= active_r_width) { 
-                            r_x_count = 0; 
-                            r_base_addr = r_base_addr + active_r_stride; 
-                            current_r_addr = r_base_addr;       
-                        }
                         
                         read_burst_count++; read_delay_counter = 0; 
-                        if (read_burst_count == 4) { RVALID.write(0); RLAST.write(0); read_state.write(r_idle); }
+                        
+                        if (read_burst_count == 4) { read_state.write(r_idle); }
                     }
                 }
                 break;
@@ -154,8 +117,7 @@ SC_MODULE(axi_lite_slave) {
     }
 
     SC_CTOR(axi_lite_slave) { 
-        // <-- NEW: Power-On SRAM Randomization 
-        // This fills the memory with random garbage data (0-255) to simulate real silicon power-up
+        // Power-On SRAM Randomization 
         for (int i = 0; i < 65536; i++) {
             memory_array[i] = rand() % 256;
         }

@@ -134,8 +134,9 @@ void StoreModule::axi_write_thread() {
                         // --- AXI ADDRESS PHASE ---
                         AWADDR.write(current_address + (beats_processed * 4)); 
                         AWLEN.write(3); // Always 4 beats
-                        AWVALID.write(1);
                         
+                        // 1. STRICT ADDRESS HANDSHAKE
+                        AWVALID.write(1);
                         do { wait(); } while (AWREADY.read() == 0);
                         AWVALID.write(0);
 
@@ -150,26 +151,26 @@ void StoreModule::axi_write_thread() {
                                 data_chunk |= ((uint32_t)out_mem[sram_idx][2] & 0xFF) << 16;
                                 data_chunk |= ((uint32_t)out_mem[sram_idx][3] & 0xFF) << 24;
                             }
-
-                            // Delay WVALID until memory signals WREADY=1 to prevent race conditions
-                            while (WREADY.read() == 0) { wait(); }
                             
                             WDATA.write(data_chunk); 
+                            
+                            // 2. STRICT DATA HANDSHAKE
                             WVALID.write(1);
                             if (i == 3) WLAST.write(1); else WLAST.write(0);
                             
-                            wait(); // Allow memory to consume the data on this clock edge
-                            
-                            // Deassert valid after successful handshake beat
-                            WVALID.write(0); 
-                            WLAST.write(0);
+                            // Hold WVALID high until Arbiter/Slave asserts WREADY
+                            do { 
+                                wait(); 
+                            } while (WREADY.read() == 0);
                         }
+                        
+                        // Deassert valid only after successful completion of the entire burst
+                        WVALID.write(0); 
+                        WLAST.write(0);
 
                         // --- AXI RESPONSE PHASE ---
-                        BREADY.write(0);
+                        BREADY.write(1); // Hold BREADY continuously high
                         while (BVALID.read() == 0) { wait(); }
-                        BREADY.write(1);
-                        wait(); // Allow memory to see BREADY
                         BREADY.write(0);
 
                         beats_processed += 4;

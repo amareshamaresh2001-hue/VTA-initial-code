@@ -172,24 +172,38 @@ void LoadModule::axi_read_thread() {
                             
                             ARADDR.write(current_address + (beats_processed * 4)); 
                             ARLEN.write(3); 
-                            ARVALID.write(1);
                             
+                            // ==============================================================
+                            // 1. AXI ADDRESS PHASE (STRICT HANDSHAKE)
+                            // We assert ARVALID to tell the Arbiter we have a valid address.
+                            // We MUST hold it high and wait() on every clock cycle until the 
+                            // Arbiter asserts ARREADY. If we drop it too early, the Arbiter 
+                            // will ignore the request.
+                            // ==============================================================
+                            ARVALID.write(1);
                             do { 
                                 wait(); 
                             } while (ARREADY.read() == 0);
                             ARVALID.write(0);
 
+                            // ==============================================================
+                            // 2. AXI DATA PHASE (STRICT CONTINUOUS HANDSHAKE)
+                            // To prevent the Arbiter from deadlocking on the RLAST signal, 
+                            // we must assert RREADY to 1 and HOLD IT CONTINUOUSLY HIGH for 
+                            // the entire 4-beat burst. Dropping RREADY to 0 between beats 
+                            // causes the Arbiter's SC_THREAD to miss the end of the transaction.
+                            // ==============================================================
                             int chunk_count = 0;
-                            RREADY.write(0); 
+                            RREADY.write(1); 
                             
                             while (chunk_count < 4) {
-                                wait(); 
+                                wait(); // Wait for the rising edge of the AXI clock
+                                
+                                // Only consume data when the memory says it is valid
                                 if (RVALID.read() == 1) {
-                                    RREADY.write(1);
-                                    wait(); 
-                                    
                                     uint32_t data_chunk = RDATA.read().to_uint();
                                     
+                                    // Unpack the 32-bit AXI word into four 8-bit SRAM bytes
                                     if (sram_idx < INP_BUFF_DEPTH) {
                                         inp_mem[sram_idx][0] = (data_chunk >> 0) & 0xFF;
                                         inp_mem[sram_idx][1] = (data_chunk >> 8) & 0xFF;
@@ -199,9 +213,11 @@ void LoadModule::axi_read_thread() {
                                     
                                     chunk_count++;
                                     sram_idx++; // Increment linear SRAM pointer
-                                    RREADY.write(0); 
                                 }
                             }
+                            // The 4-beat burst is fully complete. Now it is safe to drop RREADY.
+                            RREADY.write(0); 
+                            
                             beats_processed += 4;
                         }
                         
@@ -232,24 +248,20 @@ void LoadModule::axi_read_thread() {
                     for (uint32_t y = 0; y < y_size; y++) {
                         uint32_t beats_processed = 0;
                         while (beats_processed < x_size) {
-                            ARADDR.write(current_address + (beats_processed * 4)); 
-                            ARLEN.write(3); 
+                            // --- ADDRESS PHASE ---
                             ARVALID.write(1);
-                            
                             do { 
                                 wait(); 
                             } while (ARREADY.read() == 0);
                             ARVALID.write(0);
 
+                            // --- DATA PHASE ---
                             int chunk_count = 0;
-                            RREADY.write(0); 
+                            RREADY.write(1); // Hold READY high for the entire burst
                             
                             while (chunk_count < 4) {
                                 wait(); 
                                 if (RVALID.read() == 1) {
-                                    RREADY.write(1);
-                                    wait(); 
-                                    
                                     uint32_t data_chunk = RDATA.read().to_uint();
                                     
                                     if (sram_idx < WGT_BUFF_DEPTH) {
@@ -261,9 +273,9 @@ void LoadModule::axi_read_thread() {
                                     
                                     chunk_count++;
                                     sram_idx++; // Increment linear SRAM pointer
-                                    RREADY.write(0); 
                                 }
                             }
+                            RREADY.write(0); // Drop READY only after burst completes
                             beats_processed += 4;
                         }
                         current_address += stride;

@@ -32,35 +32,71 @@ VTA::VTA(
     sys_start_m0.write(0x00000000);
     sys_start_m2.write(0x00008000);
     
-    // --- INSTANTIATE MAIN MEMORY ---
+    // --- INSTANTIATE ARBITER AND MAIN MEMORY ---
     dram = new axi_lite_slave("main_memory"); 
     dram->ACLK(sys_clk); 
     dram->ARESETN(sys_reset);
-    dram->CFG_WIDTH(sys_cfg_width);
-    dram->CFG_STRIDE(sys_cfg_stride);
     
-    // Connect Memory to global traces
+    arbiter = new axi_interconnect("axi_arbiter");
+    arbiter->ACLK(sys_clk);
+    arbiter->ARESETN(sys_reset);
+
+    // --- ARBITER TO SLAVE CONNECTION ---
+    arbiter->AWADDR_OUT(sys_AWADDR); arbiter->AWVALID_OUT(sys_AWVALID); arbiter->AWREADY_IN(sys_AWREADY); arbiter->AWLEN_OUT(sys_AWLEN);
+    arbiter->WDATA_OUT(sys_WDATA);   arbiter->WVALID_OUT(sys_WVALID);   arbiter->WREADY_IN(sys_WREADY);   arbiter->WLAST_OUT(sys_WLAST);
+    arbiter->BRESP_IN(sys_BRESP);    arbiter->BVALID_IN(sys_BVALID);    arbiter->BREADY_OUT(sys_BREADY);
+    arbiter->ARADDR_OUT(sys_ARADDR); arbiter->ARVALID_OUT(sys_ARVALID); arbiter->ARREADY_IN(sys_ARREADY); arbiter->ARLEN_OUT(sys_ARLEN);
+    arbiter->RDATA_IN(sys_RDATA);    arbiter->RRESP_IN(sys_RRESP);      arbiter->RVALID_IN(sys_RVALID);   arbiter->RREADY_OUT(sys_RREADY); arbiter->RLAST_IN(sys_RLAST);
+
     dram->AWADDR(sys_AWADDR); dram->AWVALID(sys_AWVALID); dram->AWREADY(sys_AWREADY); dram->AWLEN(sys_AWLEN);
     dram->WDATA(sys_WDATA);   dram->WVALID(sys_WVALID);   dram->WREADY(sys_WREADY);   dram->WLAST(sys_WLAST);
     dram->BRESP(sys_BRESP);   dram->BVALID(sys_BVALID);   dram->BREADY(sys_BREADY);
     dram->ARADDR(sys_ARADDR); dram->ARVALID(sys_ARVALID); dram->ARREADY(sys_ARREADY); dram->ARLEN(sys_ARLEN);
     dram->RDATA(sys_RDATA);   dram->RRESP(sys_RRESP);     dram->RVALID(sys_RVALID);   dram->RREADY(sys_RREADY); dram->RLAST(sys_RLAST);
 
-    // --- SOLDER LOAD MODULE TO MEMORY READ CHANNELS ---
+    // --- SOLDER LOAD MODULE TO ARBITER MASTER 0 ---
     load->ACLK(sys_clk);
     load->ARESETN(sys_reset);
     load->START_ADDR(sys_start_m0);
-    load->ARADDR(sys_ARADDR); load->ARLEN(sys_ARLEN); load->ARVALID(sys_ARVALID); load->RREADY(sys_RREADY);
-    load->ARREADY(sys_ARREADY); load->RVALID(sys_RVALID); load->RLAST(sys_RLAST); load->RDATA(sys_RDATA); load->RRESP(sys_RRESP);
+    load->ARADDR(m0_ARADDR); load->ARLEN(m0_ARLEN); load->ARVALID(m0_ARVALID); load->RREADY(m0_RREADY);
+    load->ARREADY(m0_ARREADY); load->RVALID(m0_RVALID); load->RLAST(m0_RLAST); load->RDATA(m0_RDATA); load->RRESP(m0_RRESP);
 
-    // --- SOLDER STORE MODULE TO MEMORY WRITE CHANNELS ---
+    arbiter->ARADDR_M0(m0_ARADDR); arbiter->ARLEN_M0(m0_ARLEN); arbiter->ARVALID_M0(m0_ARVALID); arbiter->RREADY_M0(m0_RREADY);
+    arbiter->ARREADY_M0(m0_ARREADY); arbiter->RVALID_M0(m0_RVALID); arbiter->RLAST_M0(m0_RLAST); arbiter->RDATA_M0(m0_RDATA); arbiter->RRESP_M0(m0_RRESP);
+    
+    // Master 0 Write pins are dummy (Load only reads)
+    arbiter->AWADDR_M0(m0_AWADDR); arbiter->AWLEN_M0(m0_AWLEN); arbiter->AWVALID_M0(m0_AWVALID); arbiter->WDATA_M0(m0_WDATA); arbiter->WVALID_M0(m0_WVALID); arbiter->WLAST_M0(m0_WLAST); arbiter->BREADY_M0(m0_BREADY);
+    arbiter->AWREADY_M0(m0_AWREADY); arbiter->WREADY_M0(m0_WREADY); arbiter->BRESP_M0(m0_BRESP); arbiter->BVALID_M0(m0_BVALID);
+
+    // --- SOLDER STORE MODULE TO ARBITER MASTER 2 ---
     store->ACLK(sys_clk);
     store->ARESETN(sys_reset);
     store->START_ADDR(sys_start_m2);
-    store->AWADDR(sys_AWADDR); store->AWLEN(sys_AWLEN); store->AWVALID(sys_AWVALID);
-    store->AWREADY(sys_AWREADY);
-    store->WDATA(sys_WDATA); store->WVALID(sys_WVALID); store->WLAST(sys_WLAST); store->WREADY(sys_WREADY);
-    store->BRESP(sys_BRESP); store->BVALID(sys_BVALID); store->BREADY(sys_BREADY);
+    store->AWADDR(m2_AWADDR); store->AWLEN(m2_AWLEN); store->AWVALID(m2_AWVALID); store->BREADY(m2_BREADY);
+    store->AWREADY(m2_AWREADY); store->WDATA(m2_WDATA); store->WVALID(m2_WVALID); store->WLAST(m2_WLAST); store->WREADY(m2_WREADY);
+    store->BRESP(m2_BRESP); store->BVALID(m2_BVALID);
+
+    arbiter->AWADDR_M2(m2_AWADDR); arbiter->AWLEN_M2(m2_AWLEN); arbiter->AWVALID_M2(m2_AWVALID); arbiter->WDATA_M2(m2_WDATA); arbiter->WVALID_M2(m2_WVALID); arbiter->WLAST_M2(m2_WLAST); arbiter->BREADY_M2(m2_BREADY);
+    arbiter->AWREADY_M2(m2_AWREADY); arbiter->WREADY_M2(m2_WREADY); arbiter->BRESP_M2(m2_BRESP); arbiter->BVALID_M2(m2_BVALID);
+
+    // Master 2 Read pins are dummy (Store only writes)
+    arbiter->ARADDR_M2(m2_ARADDR); arbiter->ARLEN_M2(m2_ARLEN); arbiter->ARVALID_M2(m2_ARVALID); arbiter->RREADY_M2(m2_RREADY);
+    arbiter->ARREADY_M2(m2_ARREADY); arbiter->RVALID_M2(m2_RVALID); arbiter->RLAST_M2(m2_RLAST); arbiter->RDATA_M2(m2_RDATA); arbiter->RRESP_M2(m2_RRESP);
+
+    // Master 1 (Compute dummy) and Locks
+    arbiter->AWADDR_M1(m1_AWADDR); arbiter->AWLEN_M1(m1_AWLEN); arbiter->AWVALID_M1(m1_AWVALID); arbiter->WDATA_M1(m1_WDATA); arbiter->WVALID_M1(m1_WVALID); arbiter->WLAST_M1(m1_WLAST); arbiter->BREADY_M1(m1_BREADY);
+    arbiter->AWREADY_M1(m1_AWREADY); arbiter->WREADY_M1(m1_WREADY); arbiter->BRESP_M1(m1_BRESP); arbiter->BVALID_M1(m1_BVALID);
+    arbiter->ARADDR_M1(m1_ARADDR); arbiter->ARLEN_M1(m1_ARLEN); arbiter->ARVALID_M1(m1_ARVALID); arbiter->RREADY_M1(m1_RREADY);
+    arbiter->ARREADY_M1(m1_ARREADY); arbiter->RVALID_M1(m1_RVALID); arbiter->RLAST_M1(m1_RLAST); arbiter->RDATA_M1(m1_RDATA); arbiter->RRESP_M1(m1_RRESP);
+
+    arbiter->AWLOCK_M0(m0_AWLOCK); arbiter->ARLOCK_M0(m0_ARLOCK);
+    arbiter->AWLOCK_M1(m1_AWLOCK); arbiter->ARLOCK_M1(m1_ARLOCK);
+    arbiter->AWLOCK_M2(m2_AWLOCK); arbiter->ARLOCK_M2(m2_ARLOCK);
+
+    // Drive the dummy signals low to avoid SystemC float warnings
+    m0_AWVALID.write(0); m0_WVALID.write(0); m0_WLAST.write(0); m0_BREADY.write(0); m0_AWLOCK.write(0); m0_ARLOCK.write(0);
+    m1_AWVALID.write(0); m1_WVALID.write(0); m1_WLAST.write(0); m1_BREADY.write(0); m1_ARVALID.write(0); m1_RREADY.write(0); m1_AWLOCK.write(0); m1_ARLOCK.write(0);
+    m2_ARVALID.write(0); m2_RREADY.write(0); m2_AWLOCK.write(0); m2_ARLOCK.write(0);
 
     // =========================================================================
 
