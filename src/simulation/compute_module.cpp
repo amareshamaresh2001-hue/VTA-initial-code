@@ -331,11 +331,7 @@ void ComputeModule::dependencies_received() {
         // This handles element-wise operations on the accumulator tiles.
         // It skips NOP (No Operation), which just passes time.
 
-        // Determine if this is an "immediate" operation (e.g., adding a constant value to a tensor).
-        bool use_imm = (name.find("imm") != std::string::npos);
-        // The simulator doesn't extract the immediate value from the CSV currently, so we default to 0.
-        // This perfectly models the standard ReLU activation function: MAX(x, 0).
-        int32_t imm = 0; 
+        // Per Professor Bebawy's instruction, use_imm defaults to false and we ignore the immediate feature.
 
         // Similar to GEMM, these track the base index offsets for the two operand tiles.
         int dst_offset_out = 0, src_offset_out = 0;
@@ -362,8 +358,8 @@ void ComputeModule::dependencies_received() {
 
                     // Strict bounds checking.
                     if (dst_idx >= ACC_BUFF_DEPTH || dst_idx < 0) continue; 
-                    // Only check the source index if we are NOT using an immediate value.
-                    if (!use_imm && (src_idx >= ACC_BUFF_DEPTH || src_idx < 0)) continue; 
+                    // Strict bounds checking for the source index.
+                    if (src_idx >= ACC_BUFF_DEPTH || src_idx < 0) continue; 
 
                     // --- ELEMENT-WISE LOOP ---
                     // Iterates over the 16 elements in the 1D accumulator tile.
@@ -372,15 +368,22 @@ void ComputeModule::dependencies_received() {
                         // Operand 0 is always the value currently in the destination accumulator.
                         int32_t src_0 = acc_mem[dst_idx][oc];
 
-                        // Operand 1 is either the immediate value (0) OR the value from the source accumulator tile.
-                        int32_t src_1 = use_imm ? imm : acc_mem[src_idx][oc];
+                        // Operand 1 is the value from the source accumulator tile.
+                        int32_t src_1 = acc_mem[src_idx][oc];
+                        
+                        // Extract shift and multiply arguments exactly as vta.cc does (masking lower bits)
+                        int32_t shft_by = src_1 & 0x1F; // VTA_SHR_ARG_BIT_WIDTH = 5
+                        int32_t mul_by = src_1 & 0xFF;  // VTA_MUL_ARG_BIT_WIDTH = 8
+                        
                         int32_t result;
 
-                        // Perform the operation based on the instruction name.
-                        if      (name.find("max") != std::string::npos) result = std::max(src_0, src_1); // e.g., ReLU
-                        else if (name.find("min") != std::string::npos) result = std::min(src_0, src_1); // Clamping
-                        else if (name.find("add") != std::string::npos) result = src_0 + src_1;          // Residual connections
-                        else                                            result = src_0 >> src_1;         // Shift Right (quantization)
+                        // Perform the operation based on the instruction name, mirroring vta.cc ALU opcode branches.
+                        if      (name.find("max") != std::string::npos) result = std::max(src_0, src_1);
+                        else if (name.find("min") != std::string::npos) result = std::min(src_0, src_1);
+                        else if (name.find("add") != std::string::npos) result = src_0 + src_1;
+                        else if (name.find("shr") != std::string::npos) result = src_0 >> shft_by;
+                        else if (name.find("mul") != std::string::npos) result = src_0 * mul_by;
+                        else                                            result = src_0; // Fallback
 
                         // Write the computed result back to the 32-bit accumulator.
                         acc_mem[dst_idx][oc] = result;
@@ -412,6 +415,7 @@ void ComputeModule::finalize_instruction() {
     
     if (this->current->get_name() =="FINISH") {
         std::cout << sc_time_stamp() << "\t\t" << "---------------------------- FINISH LAYER " << ComputeModule::current_layer++ << " ----------------------------" << std::endl;
+        
         if (result_data != nullptr)
             delete result_data;
         if (prev_data != nullptr)

@@ -25,6 +25,7 @@ private:
     ARM *arm;
     Fetcher *fetcher;
 
+public: // Unavoidable: main.cpp needs to trace these for the VCD file
     Queue *l_instructions_queue;
     Queue *c_instructions_queue;
     Queue *s_instructions_queue;
@@ -40,6 +41,7 @@ private:
     axi_interconnect *arbiter;
     axi_lite_slave *dram;
     
+public:
     sc_clock sys_clk;          // The global 10ns clock driving all AXI state machines
     sc_signal<bool> sys_reset; // The global reset signal
 
