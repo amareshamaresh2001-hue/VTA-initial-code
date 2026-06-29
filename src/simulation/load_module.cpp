@@ -120,165 +120,166 @@ void LoadModule::axi_read_thread() {
         if (name == "LOAD INP" || name == "LOAD WGT") {
             
             try {
+                // =====================================================================
+                // FIX 1: Read the DRAM byte address FROM THE INSTRUCTION, not from
+                // START_ADDR. In real VTA, every LOAD instruction carries the exact
+                // physical tensor address the TVM compiler calculated. START_ADDR is
+                // just a region base for the AXI arbiter config, not the tensor address.
+                // =====================================================================
+                std::string dram_str = current->get_dram();
                 std::string sram_str = current->get_sram();
+                uint32_t dram_base = dram_str.empty() ? 0 : std::stoul(dram_str, nullptr, 16);
                 uint32_t sram_base = sram_str.empty() ? 0 : std::stoul(sram_str, nullptr, 16);
-                uint32_t y_size = current->get_y_size();
-                uint32_t x_size = current->get_x_size();
-                uint32_t stride = current->get_stride();
-                
-                // --- NEW: Tensor Padding Parameters ---
-                uint32_t y0_pad = current->get_y0_pad();
-                uint32_t y1_pad = current->get_y1_pad();
-                uint32_t x0_pad = current->get_x0_pad();
-                uint32_t x1_pad = current->get_x1_pad();
+                uint32_t y_size    = current->get_y_size();
+                uint32_t x_size    = current->get_x_size();
+                uint32_t stride    = current->get_stride();
+                uint32_t y0_pad    = current->get_y0_pad();
+                uint32_t y1_pad    = current->get_y1_pad();
+                uint32_t x0_pad    = current->get_x0_pad();
+                uint32_t x1_pad    = current->get_x1_pad();
 
                 if (x_size == 0 || y_size == 0) {
                     finish.notify(latency());
                     continue;
                 }
 
-                sc_uint<32> current_address = START_ADDR.read(); 
+                // FIX 2: Use the instruction's dram_base as the starting DRAM byte address.
+                // Mirrors HLS ref: memop_dram_T dram_idx = insn.dram_base;
+                uint32_t current_address = dram_base;
+
+                // FIX 3: sram_idx is a simple linear counter, exactly like the HLS reference.
+                // HLS ref: memop_sram_T sram_idx = insn.sram_base;
                 uint32_t sram_idx = sram_base;
-                uint32_t x_width = x0_pad + x_size + x1_pad;
 
                 if (name == "LOAD INP") {
+                    // Each INP tile = VTA_BLOCK_IN int8 values = 16 bytes = 4 x 32-bit AXI beats = 1 burst
+                    const uint32_t INP_TILE_BYTES = VTA_BLOCK_IN; // 16
+                    const uint32_t x_width = x0_pad + x_size + x1_pad;
+
                     // ==========================================
-                    // 1. TOP PADDING (y0_pad rows)
+                    // 1. TOP PADDING (y0_pad rows zeroed in SRAM)
                     // ==========================================
-                    uint32_t top_pad_tiles = y0_pad * x_width;
-                    for (uint32_t i = 0; i < top_pad_tiles; i++) {
-                        if (sram_idx < INP_BUFF_DEPTH) {
-                            for (int c = 0; c < 16; c++) inp_mem[sram_idx][c] = 0;
-                        }
+                    for (uint32_t i = 0; i < y0_pad * x_width; i++) {
+                        if (sram_idx < INP_BUFF_DEPTH)
+                            for (int c = 0; c < VTA_BLOCK_IN; c++) inp_mem[sram_idx][c] = 0;
                         sram_idx++;
                     }
 
                     // ==========================================
                     // 2. 2D DMA TRANSFER WITH ROW PADDING
+                    // HLS ref: for (int y = 0; y < y_size; y++) { ... dram_idx += x_stride; }
                     // ==========================================
                     for (uint32_t y = 0; y < y_size; y++) {
-                        
+
                         // --- Left Padding ---
                         for (uint32_t i = 0; i < x0_pad; i++) {
-                            if (sram_idx < INP_BUFF_DEPTH) {
-                                for (int c = 0; c < 16; c++) inp_mem[sram_idx][c] = 0;
-                            }
+                            if (sram_idx < INP_BUFF_DEPTH)
+                                for (int c = 0; c < VTA_BLOCK_IN; c++) inp_mem[sram_idx][c] = 0;
                             sram_idx++;
                         }
 
-                        // --- AXI Data Fetch ---
-                        uint32_t beats_processed = 0;
-                        while (beats_processed < x_size) {
-                            
-                            ARADDR.write(current_address + (beats_processed * 4)); 
-                            ARLEN.write(3); 
-                            
+                        // FIX 4: Loop tile-by-tile (one 4-beat burst per INP tile).
+                        // HLS ref: memcpy copies x_size * 16 bytes in one go;
+                        // we replicate this with one burst per tile.
+                        // ARADDR = row_base + x * tile_bytes (16 bytes per INP tile).
+                        for (uint32_t x = 0; x < x_size; x++) {
+
                             // ==============================================================
-                            // 1. AXI ADDRESS PHASE (STRICT HANDSHAKE)
-                            // We assert ARVALID to tell the Arbiter we have a valid address.
-                            // We MUST hold it high and wait() on every clock cycle until the 
-                            // Arbiter asserts ARREADY. If we drop it too early, the Arbiter 
-                            // will ignore the request.
+                            // AXI ADDRESS PHASE (STRICT HANDSHAKE)
                             // ==============================================================
+                            ARADDR.write(current_address + x * INP_TILE_BYTES);
+                            ARLEN.write(3); // 4-beat burst = 16 bytes = exactly one INP tile
                             ARVALID.write(1);
-                            do { 
-                                wait(); 
-                            } while (ARREADY.read() == 0);
+                            do { wait(); } while (ARREADY.read() == 0);
                             ARVALID.write(0);
 
                             // ==============================================================
-                            // 2. AXI DATA PHASE (STRICT CONTINUOUS HANDSHAKE)
-                            // To prevent the Arbiter from deadlocking on the RLAST signal, 
-                            // we must assert RREADY to 1 and HOLD IT CONTINUOUSLY HIGH for 
-                            // the entire 4-beat burst. Dropping RREADY to 0 between beats 
-                            // causes the Arbiter's SC_THREAD to miss the end of the transaction.
+                            // AXI DATA PHASE — 4 beats fill inp_mem[sram_idx][0..15]
+                            // Each 32-bit beat fills 4 bytes of the 16-byte tile.
                             // ==============================================================
-                            int chunk_count = 0;
-                            RREADY.write(1); 
-                            
-                            while (chunk_count < 4) {
-                                wait(); // Wait for the rising edge of the AXI clock
-                                
-                                // Only consume data when the memory says it is valid
+                            int chunk = 0;
+                            RREADY.write(1);
+                            while (chunk < 4) {
+                                wait();
                                 if (RVALID.read() == 1) {
-                                    uint32_t data_chunk = RDATA.read().to_uint();
-                                    
-                                    // Unpack the 32-bit AXI word into four 8-bit SRAM bytes
+                                    uint32_t d = RDATA.read().to_uint();
                                     if (sram_idx < INP_BUFF_DEPTH) {
-                                        inp_mem[sram_idx][0] = (data_chunk >> 0) & 0xFF;
-                                        inp_mem[sram_idx][1] = (data_chunk >> 8) & 0xFF;
-                                        inp_mem[sram_idx][2] = (data_chunk >> 16) & 0xFF;
-                                        inp_mem[sram_idx][3] = (data_chunk >> 24) & 0xFF;
+                                        inp_mem[sram_idx][chunk*4+0] = (d >>  0) & 0xFF;
+                                        inp_mem[sram_idx][chunk*4+1] = (d >>  8) & 0xFF;
+                                        inp_mem[sram_idx][chunk*4+2] = (d >> 16) & 0xFF;
+                                        inp_mem[sram_idx][chunk*4+3] = (d >> 24) & 0xFF;
                                     }
-                                    
-                                    chunk_count++;
-                                    sram_idx++; // Increment linear SRAM pointer
+                                    chunk++;
                                 }
                             }
-                            // The 4-beat burst is fully complete. Now it is safe to drop RREADY.
-                            RREADY.write(0); 
-                            
-                            beats_processed += 4;
+                            RREADY.write(0);
+                            sram_idx++; // Advance sram_idx by 1 per tile (linear counter)
                         }
-                        
-                        current_address += stride;
 
                         // --- Right Padding ---
                         for (uint32_t i = 0; i < x1_pad; i++) {
-                            if (sram_idx < INP_BUFF_DEPTH) {
-                                for (int c = 0; c < 16; c++) inp_mem[sram_idx][c] = 0;
-                            }
+                            if (sram_idx < INP_BUFF_DEPTH)
+                                for (int c = 0; c < VTA_BLOCK_IN; c++) inp_mem[sram_idx][c] = 0;
                             sram_idx++;
                         }
+
+                        // FIX 5: Advance DRAM by stride TILES (stride * 16 bytes) per row.
+                        // HLS ref: dram_idx += x_stride  (x_stride is in tile units)
+                        current_address += stride * INP_TILE_BYTES;
                     }
 
                     // ==========================================
-                    // 3. BOTTOM PADDING (y1_pad rows)
+                    // 3. BOTTOM PADDING (y1_pad rows zeroed in SRAM)
                     // ==========================================
-                    uint32_t bot_pad_tiles = y1_pad * x_width;
-                    for (uint32_t i = 0; i < bot_pad_tiles; i++) {
-                        if (sram_idx < INP_BUFF_DEPTH) {
-                            for (int c = 0; c < 16; c++) inp_mem[sram_idx][c] = 0;
-                        }
+                    for (uint32_t i = 0; i < y1_pad * x_width; i++) {
+                        if (sram_idx < INP_BUFF_DEPTH)
+                            for (int c = 0; c < VTA_BLOCK_IN; c++) inp_mem[sram_idx][c] = 0;
                         sram_idx++;
                     }
-                } 
-                else if (name == "LOAD WGT") {
-                    // Standard 2D load without padding
-                    for (uint32_t y = 0; y < y_size; y++) {
-                        uint32_t beats_processed = 0;
-                        while (beats_processed < x_size) {
-                            // --- ADDRESS PHASE ---
-                            ARVALID.write(1);
-                            do { 
-                                wait(); 
-                            } while (ARREADY.read() == 0);
-                            ARVALID.write(0);
 
-                            // --- DATA PHASE ---
-                            int chunk_count = 0;
-                            RREADY.write(1); // Hold READY high for the entire burst
-                            
-                            while (chunk_count < 4) {
-                                wait(); 
-                                if (RVALID.read() == 1) {
-                                    uint32_t data_chunk = RDATA.read().to_uint();
-                                    
-                                    if (sram_idx < WGT_BUFF_DEPTH) {
-                                        wgt_mem[sram_idx][0] = (data_chunk >> 0) & 0xFF;
-                                        wgt_mem[sram_idx][1] = (data_chunk >> 8) & 0xFF;
-                                        wgt_mem[sram_idx][2] = (data_chunk >> 16) & 0xFF;
-                                        wgt_mem[sram_idx][3] = (data_chunk >> 24) & 0xFF;
+                } else if (name == "LOAD WGT") {
+
+                    // Each WGT tile = VTA_BLOCK_OUT * VTA_BLOCK_IN bytes = 16 * 16 = 256 bytes.
+                    // At 16 bytes per 4-beat burst, each weight tile needs 16 bursts.
+                    // FIX 6: ARADDR is now correctly set for LOAD WGT (was never set before).
+                    const uint32_t WGT_TILE_BYTES  = VTA_BLOCK_OUT * VTA_BLOCK_IN; // 256
+                    const uint32_t BURST_BYTES      = 16; // 4 beats * 4 bytes/beat
+                    const uint32_t BURSTS_PER_TILE  = WGT_TILE_BYTES / BURST_BYTES; // 16
+
+                    for (uint32_t y = 0; y < y_size; y++) {
+                        for (uint32_t x = 0; x < x_size; x++) {
+
+                            // Issue 16 consecutive bursts to fill all 256 bytes of one weight tile.
+                            for (uint32_t b = 0; b < BURSTS_PER_TILE; b++) {
+                                ARADDR.write(current_address + x * WGT_TILE_BYTES + b * BURST_BYTES);
+                                ARLEN.write(3);
+                                ARVALID.write(1);
+                                do { wait(); } while (ARREADY.read() == 0);
+                                ARVALID.write(0);
+
+                                int chunk = 0;
+                                RREADY.write(1);
+                                while (chunk < 4) {
+                                    wait();
+                                    if (RVALID.read() == 1) {
+                                        uint32_t d = RDATA.read().to_uint();
+                                        uint32_t byte_off = b * BURST_BYTES + chunk * 4;
+                                        if (sram_idx < WGT_BUFF_DEPTH) {
+                                            wgt_mem[sram_idx][byte_off+0] = (d >>  0) & 0xFF;
+                                            wgt_mem[sram_idx][byte_off+1] = (d >>  8) & 0xFF;
+                                            wgt_mem[sram_idx][byte_off+2] = (d >> 16) & 0xFF;
+                                            wgt_mem[sram_idx][byte_off+3] = (d >> 24) & 0xFF;
+                                        }
+                                        chunk++;
                                     }
-                                    
-                                    chunk_count++;
-                                    sram_idx++; // Increment linear SRAM pointer
                                 }
+                                RREADY.write(0);
                             }
-                            RREADY.write(0); // Drop READY only after burst completes
-                            beats_processed += 4;
+                            sram_idx++; // One full WGT tile (256 bytes) loaded, advance by 1
                         }
-                        current_address += stride;
+                        // FIX 7: Advance DRAM by stride * WGT_TILE_BYTES per row.
+                        // HLS ref: dram_idx += x_stride
+                        current_address += stride * WGT_TILE_BYTES;
                     }
                 }
             } catch (...) {

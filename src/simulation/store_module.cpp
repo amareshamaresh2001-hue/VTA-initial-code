@@ -107,76 +107,92 @@ void StoreModule::axi_write_thread() {
 
         std::string name = current->get_name();
         
-        // Only proceed if this is actually a STORE instruction (Parser names it "STORE STORE")
+        // Only proceed if this is actually a STORE instruction (not a NOP)
         if (name.find("STORE") != std::string::npos && name != "NOP-STORE-STAGE") {
             
             try {
+                // =====================================================================
+                // FIX 1: Read the DRAM byte address FROM THE INSTRUCTION, not from
+                // START_ADDR. The STORE instruction carries the exact physical address
+                // in DRAM where the output tensor must be written.
+                // HLS ref: memop_dram_T dram_idx = insn.dram_base;
+                // =====================================================================
+                std::string dram_str = current->get_dram();
                 std::string sram_str = current->get_sram();
+                uint32_t dram_base = dram_str.empty() ? 0 : std::stoul(dram_str, nullptr, 16);
                 uint32_t sram_base = sram_str.empty() ? 0 : std::stoul(sram_str, nullptr, 16);
-                uint32_t y_size = current->get_y_size();
-                uint32_t x_size = current->get_x_size();
-                uint32_t stride = current->get_stride();
+                uint32_t y_size    = current->get_y_size();
+                uint32_t x_size    = current->get_x_size();
+                uint32_t stride    = current->get_stride();
 
                 if (x_size == 0 || y_size == 0) {
                     finish.notify(latency());
                     continue;
                 }
 
-                sc_uint<32> current_address = START_ADDR.read(); 
+                // FIX 2: Use the instruction's dram_base as the starting DRAM byte address.
+                uint32_t current_address = dram_base;
 
-                // 2. 2D DMA TRANSFER LOOP
+                // FIX 3: sram_idx is a simple linear counter.
+                // HLS ref: sram_idx = insn.sram_base; sram_idx += x_size per row.
+                uint32_t sram_idx = sram_base;
+
+                // Each OUT tile = VTA_BLOCK_OUT int8 values = 16 bytes = 4 x 32-bit AXI beats = 1 burst
+                const uint32_t OUT_TILE_BYTES = VTA_BLOCK_OUT; // 16
+
+                // 2D DMA TRANSFER LOOP
+                // HLS ref: for (int y = 0; y < y_size; y++) { memcpy(..., x_size * VTA_OUT_ELEM_BYTES); dram_idx += x_stride; }
                 for (uint32_t y = 0; y < y_size; y++) {
                     
-                    uint32_t beats_processed = 0;
-                    
-                    while (beats_processed < x_size) {
+                    for (uint32_t x = 0; x < x_size; x++) {
                         
                         // --- AXI ADDRESS PHASE ---
-                        AWADDR.write(current_address + (beats_processed * 4)); 
-                        AWLEN.write(3); // Always 4 beats
-                        
-                        // 1. STRICT ADDRESS HANDSHAKE
+                        // AWADDR = row_base + x * tile_bytes (16 bytes per OUT tile)
+                        AWADDR.write(current_address + x * OUT_TILE_BYTES);
+                        AWLEN.write(3); // Always 4 beats per OUT tile
+
+                        // STRICT ADDRESS HANDSHAKE
                         AWVALID.write(1);
                         do { wait(); } while (AWREADY.read() == 0);
                         AWVALID.write(0);
 
                         // --- AXI DATA PHASE ---
+                        // FIX 4: Write WDATA FIRST, then assert WVALID.
+                        // Each 4-beat burst sends 16 bytes of one OUT tile (sram_idx + x).
+                        // FIX (Bug 3): sram_idx is a running counter; use (sram_idx + x) per tile.
                         for (uint32_t i = 0; i < 4; i++) {
-                            uint32_t sram_idx = sram_base + (y * x_size) + beats_processed + i;
+                            uint32_t cur_sram = sram_idx + x;
                             uint32_t data_chunk = 0;
-                            
-                            if (sram_idx < ACC_BUFF_DEPTH) {
-                                data_chunk |= ((uint32_t)out_mem[sram_idx][0] & 0xFF) << 0;
-                                data_chunk |= ((uint32_t)out_mem[sram_idx][1] & 0xFF) << 8;
-                                data_chunk |= ((uint32_t)out_mem[sram_idx][2] & 0xFF) << 16;
-                                data_chunk |= ((uint32_t)out_mem[sram_idx][3] & 0xFF) << 24;
+                            if (cur_sram < ACC_BUFF_DEPTH) {
+                                data_chunk |= ((uint32_t)(out_mem[cur_sram][i*4+0] & 0xFF)) << 0;
+                                data_chunk |= ((uint32_t)(out_mem[cur_sram][i*4+1] & 0xFF)) << 8;
+                                data_chunk |= ((uint32_t)(out_mem[cur_sram][i*4+2] & 0xFF)) << 16;
+                                data_chunk |= ((uint32_t)(out_mem[cur_sram][i*4+3] & 0xFF)) << 24;
                             }
-                            
-                            WDATA.write(data_chunk); 
-                            
-                            // 2. STRICT DATA HANDSHAKE
+                            // Set data stable on the bus first, THEN assert valid
+                            WDATA.write(data_chunk);
+                            WLAST.write(i == 3 ? 1 : 0);
                             WVALID.write(1);
-                            if (i == 3) WLAST.write(1); else WLAST.write(0);
-                            
-                            // Hold WVALID high until Arbiter/Slave asserts WREADY
-                            do { 
-                                wait(); 
-                            } while (WREADY.read() == 0);
+                            // Hold WVALID until slave accepts this beat
+                            do { wait(); } while (WREADY.read() == 0);
                         }
-                        
-                        // Deassert valid only after successful completion of the entire burst
-                        WVALID.write(0); 
+                        WVALID.write(0);
                         WLAST.write(0);
 
                         // --- AXI RESPONSE PHASE ---
-                        BREADY.write(1); // Hold BREADY continuously high
+                        // Wait for the slave (memory) to confirm the write was accepted
+                        BREADY.write(1);
                         while (BVALID.read() == 0) { wait(); }
                         BREADY.write(0);
-
-                        beats_processed += 4;
                     }
-                    
-                    current_address += stride; 
+
+                    // FIX 5: Advance DRAM by stride TILES (stride * 16 bytes) per row.
+                    // HLS ref: dram_idx += x_stride
+                    current_address += stride * OUT_TILE_BYTES;
+
+                    // FIX 6: Advance sram_idx linearly by x_size (NOT recalculated per beat).
+                    // HLS ref: sram_idx += x_size
+                    sram_idx += x_size;
                 }
             } catch (...) {
                 std::cout << "[AXI WRITE ERROR] Failed to parse memory addresses." << std::endl;
