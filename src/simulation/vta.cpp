@@ -30,7 +30,9 @@ VTA::VTA(
     sys_cfg_width.write(16);
     sys_cfg_stride.write(16);
     sys_start_m0.write(0x00000000);
+    sys_start_m1.write(0x00004000); // Compute module reads UOPs and biases from this region
     sys_start_m2.write(0x00008000);
+    sys_start_m3.write(0x0000C000); // Fetcher reads instructions from this region
     
     // --- INSTANTIATE ARBITER AND MAIN MEMORY ---
     dram = new axi_lite_slave("main_memory"); 
@@ -83,20 +85,42 @@ VTA::VTA(
     arbiter->ARADDR_M2(m2_ARADDR); arbiter->ARLEN_M2(m2_ARLEN); arbiter->ARVALID_M2(m2_ARVALID); arbiter->RREADY_M2(m2_RREADY);
     arbiter->ARREADY_M2(m2_ARREADY); arbiter->RVALID_M2(m2_RVALID); arbiter->RLAST_M2(m2_RLAST); arbiter->RDATA_M2(m2_RDATA); arbiter->RRESP_M2(m2_RRESP);
 
-    // Master 1 (Compute dummy) and Locks
+    // --- SOLDER COMPUTE MODULE TO ARBITER MASTER 1 ---
+    compute->ACLK(sys_clk);
+    compute->ARESETN(sys_reset);
+    compute->START_ADDR(sys_start_m1);
+    compute->ARADDR(m1_ARADDR); compute->ARLEN(m1_ARLEN); compute->ARVALID(m1_ARVALID); compute->RREADY(m1_RREADY);
+    compute->ARREADY(m1_ARREADY); compute->RVALID(m1_RVALID); compute->RLAST(m1_RLAST); compute->RDATA(m1_RDATA); compute->RRESP(m1_RRESP);
+
+    // Master 1 Write pins are dummy (Compute only reads)
     arbiter->AWADDR_M1(m1_AWADDR); arbiter->AWLEN_M1(m1_AWLEN); arbiter->AWVALID_M1(m1_AWVALID); arbiter->WDATA_M1(m1_WDATA); arbiter->WVALID_M1(m1_WVALID); arbiter->WLAST_M1(m1_WLAST); arbiter->BREADY_M1(m1_BREADY);
     arbiter->AWREADY_M1(m1_AWREADY); arbiter->WREADY_M1(m1_WREADY); arbiter->BRESP_M1(m1_BRESP); arbiter->BVALID_M1(m1_BVALID);
     arbiter->ARADDR_M1(m1_ARADDR); arbiter->ARLEN_M1(m1_ARLEN); arbiter->ARVALID_M1(m1_ARVALID); arbiter->RREADY_M1(m1_RREADY);
     arbiter->ARREADY_M1(m1_ARREADY); arbiter->RVALID_M1(m1_RVALID); arbiter->RLAST_M1(m1_RLAST); arbiter->RDATA_M1(m1_RDATA); arbiter->RRESP_M1(m1_RRESP);
 
+    // --- SOLDER FETCHER MODULE TO ARBITER MASTER 3 ---
+    fetcher->ACLK(sys_clk);
+    fetcher->ARESETN(sys_reset);
+    fetcher->START_ADDR(sys_start_m3);
+    fetcher->ARADDR(m3_ARADDR); fetcher->ARLEN(m3_ARLEN); fetcher->ARVALID(m3_ARVALID); fetcher->RREADY(m3_RREADY);
+    fetcher->ARREADY(m3_ARREADY); fetcher->RVALID(m3_RVALID); fetcher->RLAST(m3_RLAST); fetcher->RDATA(m3_RDATA); fetcher->RRESP(m3_RRESP);
+
+    // Master 3 Write pins are dummy (Fetcher only reads)
+    arbiter->AWADDR_M3(m3_AWADDR); arbiter->AWLEN_M3(m3_AWLEN); arbiter->AWVALID_M3(m3_AWVALID); arbiter->WDATA_M3(m3_WDATA); arbiter->WVALID_M3(m3_WVALID); arbiter->WLAST_M3(m3_WLAST); arbiter->BREADY_M3(m3_BREADY);
+    arbiter->AWREADY_M3(m3_AWREADY); arbiter->WREADY_M3(m3_WREADY); arbiter->BRESP_M3(m3_BRESP); arbiter->BVALID_M3(m3_BVALID);
+    arbiter->ARADDR_M3(m3_ARADDR); arbiter->ARLEN_M3(m3_ARLEN); arbiter->ARVALID_M3(m3_ARVALID); arbiter->RREADY_M3(m3_RREADY);
+    arbiter->ARREADY_M3(m3_ARREADY); arbiter->RVALID_M3(m3_RVALID); arbiter->RLAST_M3(m3_RLAST); arbiter->RDATA_M3(m3_RDATA); arbiter->RRESP_M3(m3_RRESP);
+
     arbiter->AWLOCK_M0(m0_AWLOCK); arbiter->ARLOCK_M0(m0_ARLOCK);
     arbiter->AWLOCK_M1(m1_AWLOCK); arbiter->ARLOCK_M1(m1_ARLOCK);
     arbiter->AWLOCK_M2(m2_AWLOCK); arbiter->ARLOCK_M2(m2_ARLOCK);
+    arbiter->AWLOCK_M3(m3_AWLOCK); arbiter->ARLOCK_M3(m3_ARLOCK);
 
-    // Drive the dummy signals low to avoid SystemC float warnings
+    // Drive remaining dummy signals low to avoid SystemC float warnings
     m0_AWVALID.write(0); m0_WVALID.write(0); m0_WLAST.write(0); m0_BREADY.write(0); m0_AWLOCK.write(0); m0_ARLOCK.write(0);
-    m1_AWVALID.write(0); m1_WVALID.write(0); m1_WLAST.write(0); m1_BREADY.write(0); m1_ARVALID.write(0); m1_RREADY.write(0); m1_AWLOCK.write(0); m1_ARLOCK.write(0);
+    m1_AWVALID.write(0); m1_WVALID.write(0); m1_WLAST.write(0); m1_BREADY.write(0); m1_AWLOCK.write(0); m1_ARLOCK.write(0);
     m2_ARVALID.write(0); m2_RREADY.write(0); m2_AWLOCK.write(0); m2_ARLOCK.write(0);
+    m3_AWVALID.write(0); m3_WVALID.write(0); m3_WLAST.write(0); m3_BREADY.write(0); m3_AWLOCK.write(0); m3_ARLOCK.write(0);
 
     // =========================================================================
 
@@ -265,7 +289,6 @@ void VTA::start() {
     load->start();
     compute->start();
     store->start();
-    arm->start();
 }
 
 // =========================================================================
@@ -281,6 +304,13 @@ void VTA::power_on_sequence() {
     wait(100, SC_NS);
     
     // 3. Release Reset (Active Low = 1)
-    std::cout << "\n[SYSTEM] AXI Bus Reset Released. Power-On Complete." << std::endl;
     sys_reset.write(1);
+    
+    // 4. Wait 1 more clock cycle to ensure all threads see ARESETN=1
+    wait(10, SC_NS);
+    
+    std::cout << "\n[SYSTEM] AXI Bus Reset Released. Power-On Complete." << std::endl;
+    
+    // 5. Trigger the ARM to start fetching instructions AFTER reset is released
+    arm->start();
 }

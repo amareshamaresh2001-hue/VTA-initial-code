@@ -21,9 +21,9 @@ public:
         const std::vector<std::string>& keys,
         const std::map<std::string, std::vector<std::tuple<InstrType, sc_int<64>, sc_int<64>>>>& encoded_splited_instructions);
 
-private:
     ARM *arm;
     Fetcher *fetcher;
+
 
 public: // Unavoidable: main.cpp needs to trace these for the VCD file
     Queue *l_instructions_queue;
@@ -72,7 +72,7 @@ public:
     sc_signal<bool> m0_AWLOCK, m0_ARLOCK; // Dispatcher lock pins
     sc_signal<sc_uint<32>> sys_start_m0;  // Dynamic start address for Load
 
-    // 3. Traces for Master 1 (Compute Module -> Arbiter) [Currently Dummy Wires]
+    // 3. Traces for Master 1 (Compute Module -> Arbiter)
     sc_signal<sc_uint<32>> m1_AWADDR, m1_WDATA, m1_ARADDR, m1_RDATA;
     sc_signal<sc_uint<8>>  m1_AWLEN, m1_ARLEN;
     sc_signal<sc_uint<2>>  m1_BRESP, m1_RRESP;
@@ -80,6 +80,7 @@ public:
     sc_signal<bool> m1_BVALID, m1_BREADY, m1_ARVALID, m1_ARREADY;
     sc_signal<bool> m1_RVALID, m1_RREADY, m1_RLAST;
     sc_signal<bool> m1_AWLOCK, m1_ARLOCK;
+    sc_signal<sc_uint<32>> sys_start_m1;  // Dynamic start address for Compute
 
     // 4. Traces for Master 2 (Store Module -> Arbiter)
     sc_signal<sc_uint<32>> m2_AWADDR, m2_WDATA, m2_ARADDR, m2_RDATA;
@@ -90,6 +91,16 @@ public:
     sc_signal<bool> m2_RVALID, m2_RREADY, m2_RLAST;
     sc_signal<bool> m2_AWLOCK, m2_ARLOCK; // Dispatcher lock pins
     sc_signal<sc_uint<32>> sys_start_m2;  // Dynamic start address for Store
+
+    // 5. Traces for Master 3 (Fetcher -> Arbiter)
+    sc_signal<sc_uint<32>> m3_AWADDR, m3_WDATA, m3_ARADDR, m3_RDATA;
+    sc_signal<sc_uint<8>>  m3_AWLEN, m3_ARLEN;
+    sc_signal<sc_uint<2>>  m3_BRESP, m3_RRESP;
+    sc_signal<bool> m3_AWVALID, m3_AWREADY, m3_WVALID, m3_WREADY, m3_WLAST;
+    sc_signal<bool> m3_BVALID, m3_BREADY, m3_ARVALID, m3_ARREADY;
+    sc_signal<bool> m3_RVALID, m3_RREADY, m3_RLAST;
+    sc_signal<bool> m3_AWLOCK, m3_ARLOCK;
+    sc_signal<sc_uint<32>> sys_start_m3;  // Dynamic start address for Fetcher
 
     void power_on_sequence(); // --- STAGE 2: Power-On Reset ---
 

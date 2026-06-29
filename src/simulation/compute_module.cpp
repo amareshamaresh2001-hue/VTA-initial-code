@@ -30,6 +30,10 @@ int ComputeModule::current_layer = 0;
 
 ComputeModule::ComputeModule(sc_module_name n) : Module(n) {
 
+    // AXI read thread - mirrors LoadModule pattern exactly
+    SC_THREAD(axi_read_thread);
+    sensitive << ACLK.pos();
+
     SC_METHOD(send_signal_handler);
     dont_initialize();
     sensitive << send_signal;
@@ -185,58 +189,14 @@ void ComputeModule::dependencies_received() {
         // printing and cleanup for this specific instruction.
     }
     else if (name == "LOAD UOP") {
-        // LOAD UOP: This instruction loads the micro-op (UOP) program from DRAM into the on-chip SRAM.
-        // Micro-ops are the low-level instructions that tell GEMM/ALU which tiles to process.
-        try {
-            // Get the SRAM and DRAM base addresses from the instruction fields (stored as hex strings).
-            std::string sram_str = current->get_sram();
-            std::string dram_str = current->get_dram();
-            
-            // Convert the hex strings to integers. If the string is empty, default to 0.
-            uint32_t sram_base = sram_str.empty() ? 0 : std::stoul(sram_str, nullptr, 16);
-            uint32_t dram_base = dram_str.empty() ? 0 : std::stoul(dram_str, nullptr, 16);
-            
-            // Get the number of micro-ops to copy.
-            uint32_t x_size = current->get_x_size();
-            
-            // Bounds check to prevent segmentation faults (0xC0000005).
-            // We must ensure that the read from dram_uops and the write to uop_mem are both fully within bounds.
-            if (x_size > 0 && sram_base + x_size <= UOP_BUFF_DEPTH && dram_base + x_size <= UOP_BUFF_DEPTH) {
-                // Copy the micro-ops from the simulated DRAM array to the local uop_mem SRAM.
-                std::memcpy(&uop_mem[sram_base], &dram_uops[dram_base], x_size * sizeof(uint32_t));
-            }
-        } catch (...) {
-            // Catch block to prevent crashes if std::stoul fails (e.g., due to malformed CSV fields).
-        }
+        // LOAD UOP: Fire the AXI thread to fetch micro-ops from DRAM via M1.
+        start_axi_read.notify(SC_ZERO_TIME);
+        return; // AXI thread will call finish.notify() when done
     }
     else if (name == "LOAD ACC") {
-        // LOAD ACC: This instruction pre-loads the accumulator SRAM with bias values from DRAM.
-        // This is necessary because in VTA, biases are added to the accumulator before the GEMM starts.
-        try {
-            // Get the base addresses for SRAM and DRAM.
-            std::string sram_str = current->get_sram();
-            std::string dram_str = current->get_dram();
-            uint32_t sram_idx = sram_str.empty() ? 0 : std::stoul(sram_str, nullptr, 16);
-            uint32_t dram_idx = dram_str.empty() ? 0 : std::stoul(dram_str, nullptr, 16);
-            
-            // Emulate the 2D DMA transfer (load_pad_2d in vta.cc).
-            // It loops over the 'y' dimension (height) of the tensor transfer.
-            for (int y = 0; y < current->get_y_size(); y++) {
-                // Bounds check to prevent segmentation faults (0xC0000005).
-                if (sram_idx < ACC_BUFF_DEPTH && dram_idx < ACC_BUFF_DEPTH && current->get_x_size() > 0) {
-                    // Copy one row (x_size elements) from DRAM to SRAM.
-                    // Each element is an entire output tile (VTA_BLOCK_OUT * int32_t).
-                    std::memcpy(&acc_mem[sram_idx][0],
-                                &dram_biases[dram_idx][0],
-                                current->get_x_size() * sizeof(int32_t) * VTA_BLOCK_OUT);
-                }
-                // Advance the pointers to the next row based on size and stride.
-                sram_idx += current->get_x_size();
-                dram_idx += current->get_stride();
-            }
-        } catch (...) {
-             // Catch block to prevent crashes on malformed input.
-        }
+        // LOAD ACC: Fire the AXI thread to fetch biases from DRAM via M1.
+        start_axi_read.notify(SC_ZERO_TIME);
+        return; // AXI thread will call finish.notify() when done
     }
     else if (name == "GEMM") {
         // GEMM: General Matrix Multiply. 
@@ -634,8 +594,109 @@ void ComputeModule::push_next_rdy_handler() {
 }
 
 void ComputeModule::write_push_next_data_handler() {
-    // std::cout << sc_time_stamp() << " COMPUTE SEND DATA TO STORE " << this->current->id << std::endl;
     this->push_next_data.write(this->current->get_pc());
     this->push_next_end_state = true;
     this->activate_push_next_end.notify(1, SC_NS);
+}
+
+// =========================================================================
+// --- AXI READ THREAD (M1) ---
+// Mirrors LoadModule::axi_read_thread exactly.
+// Handles LOAD UOP (micro-ops into uop_mem) and LOAD ACC (biases into acc_mem).
+// =========================================================================
+void ComputeModule::axi_read_thread() {
+    ARVALID.write(0);
+    RREADY.write(0);
+
+    while (true) {
+        wait(start_axi_read);
+
+        std::string name = current->get_name();
+
+        try {
+            std::string sram_str = current->get_sram();
+            std::string dram_str = current->get_dram();
+            uint32_t sram_base = sram_str.empty() ? 0 : std::stoul(sram_str, nullptr, 16);
+            uint32_t dram_base = dram_str.empty() ? 0 : std::stoul(dram_str, nullptr, 16);
+            uint32_t x_size    = current->get_x_size();
+            uint32_t y_size    = current->get_y_size() == 0 ? 1 : current->get_y_size();
+
+            if (x_size == 0) { finish.notify(latency()); continue; }
+
+            sc_uint<32> base_addr = START_ADDR.read();
+
+            if (name == "LOAD UOP") {
+                // Fetch x_size micro-ops (4 bytes each) from DRAM into uop_mem.
+                // We burst 4 beats at a time, each beat = 4 bytes = 1 micro-op.
+                uint32_t beats_remaining = x_size;
+                uint32_t sram_idx = sram_base;
+                uint32_t addr_offset = dram_base * 4; // byte address
+
+                while (beats_remaining > 0) {
+                    ARADDR.write(base_addr + addr_offset);
+                    ARLEN.write(3); // 4-beat burst
+
+                    ARVALID.write(1);
+                    do { wait(); } while (ARREADY.read() == 0);
+                    ARVALID.write(0);
+
+                    int chunk_count = 0;
+                    RREADY.write(1);
+                    while (chunk_count < 4) {
+                        wait();
+                        if (RVALID.read() == 1) {
+                            uint32_t data = RDATA.read().to_uint();
+                            if (sram_idx < UOP_BUFF_DEPTH)
+                                uop_mem[sram_idx] = data;
+                            sram_idx++;
+                            addr_offset += 4;
+                            chunk_count++;
+                            beats_remaining = (beats_remaining > 0) ? beats_remaining - 1 : 0;
+                        }
+                    }
+                    RREADY.write(0);
+                }
+
+            } else if (name == "LOAD ACC") {
+                // Fetch bias tiles from DRAM into acc_mem.
+                // Each tile = VTA_BLOCK_OUT int32_t values = 16 * 4 = 64 bytes.
+                uint32_t sram_idx  = sram_base;
+                uint32_t addr_offset = dram_base * VTA_BLOCK_OUT * 4;
+
+                for (uint32_t y = 0; y < y_size && sram_idx < ACC_BUFF_DEPTH; y++) {
+                    for (uint32_t x = 0; x < x_size && sram_idx < ACC_BUFF_DEPTH; x++) {
+                        // Each acc tile has VTA_BLOCK_OUT int32 = 16 beats of 4 bytes.
+                        // We burst 4 beats at a time, so 4 bursts per tile.
+                        for (int burst = 0; burst < VTA_BLOCK_OUT / 4; burst++) {
+                            ARADDR.write(base_addr + addr_offset);
+                            ARLEN.write(3);
+
+                            ARVALID.write(1);
+                            do { wait(); } while (ARREADY.read() == 0);
+                            ARVALID.write(0);
+
+                            int chunk_count = 0;
+                            RREADY.write(1);
+                            int elem_base = burst * 4;
+                            while (chunk_count < 4) {
+                                wait();
+                                if (RVALID.read() == 1) {
+                                    int32_t data = (int32_t)RDATA.read().to_uint();
+                                    if (sram_idx < ACC_BUFF_DEPTH)
+                                        acc_mem[sram_idx][elem_base + chunk_count] = data;
+                                    addr_offset += 4;
+                                    chunk_count++;
+                                }
+                            }
+                            RREADY.write(0);
+                        }
+                        sram_idx++;
+                    }
+                    sram_idx += current->get_stride();
+                }
+            }
+        } catch (...) {}
+
+        finish.notify(latency());
+    }
 }

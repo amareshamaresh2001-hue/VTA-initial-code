@@ -90,6 +90,32 @@ public:
     sc_out<sc_int<64>> store_queue_data;
     sc_out<bool> store_queue_end;
 
+    // =========================================================================
+    // --- AXI MASTER READ PORT (M3) ---
+    // Allows the Fetcher to load instructions directly from DRAM via M3.
+    // Mirrors the LoadModule AXI pattern exactly.
+    // =========================================================================
+    sc_in<bool>         ACLK;
+    sc_in<bool>         ARESETN;
+    sc_in<sc_uint<32>>  START_ADDR;
+
+    sc_out<sc_uint<32>> ARADDR;
+    sc_out<sc_uint<8>>  ARLEN;
+    sc_out<bool>        ARVALID;
+    sc_in<bool>         ARREADY;
+
+    sc_in<sc_uint<32>>  RDATA;
+    sc_in<sc_uint<2>>   RRESP;
+    sc_in<bool>         RVALID;
+    sc_out<bool>        RREADY;
+    sc_in<bool>         RLAST;
+
+    // --- Validation Signals for VCD Tracing ---
+    sc_signal<sc_uint<64>> parser_inst_part0;
+    sc_signal<sc_uint<64>> parser_inst_part1;
+    sc_signal<sc_uint<64>> axi_fetch_part0;
+    sc_signal<sc_uint<64>> axi_fetch_part1;
+
     Fetcher(
         sc_core::sc_module_name nm,
         const std::vector<std::string>& keys,
@@ -109,6 +135,8 @@ protected:
     sc_int<64> bits;
     std::vector<sc_int<64>> current_instruction_part;
 
+    bool do_fetch_layer = false;
+
     bool load_queue_vld_state = false;
     bool load_queue_end_state = false;
     bool compute_queue_vld_state = false;
@@ -119,6 +147,7 @@ protected:
     sc_event load_layer;
     sc_event load;
     sc_event send;
+    sc_event start_axi_read;
 
     sc_event activate_load_queue_vld;
     sc_event activate_load_queue_end;
@@ -137,6 +166,7 @@ protected:
 
     void load_instruction();
     void send_instruction();
+    void axi_read_thread();
 
     void activate_load_queue_vld_handler();
     void activate_load_queue_end_handler();

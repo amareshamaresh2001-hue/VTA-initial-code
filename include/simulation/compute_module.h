@@ -13,6 +13,26 @@ public:
     // trigger
     sc_out<bool> out_trig;
 
+    // =========================================================================
+    // --- AXI MASTER READ PORT (M1) ---
+    // Allows the Compute module to load Micro-Ops and Biases directly from DRAM.
+    // Mirrors the LoadModule AXI pattern exactly.
+    // =========================================================================
+    sc_in<bool>         ACLK;
+    sc_in<bool>         ARESETN;
+    sc_in<sc_uint<32>>  START_ADDR;
+
+    sc_out<sc_uint<32>> ARADDR;
+    sc_out<sc_uint<8>>  ARLEN;
+    sc_out<bool>        ARVALID;
+    sc_in<bool>         ARREADY;
+
+    sc_in<sc_uint<32>>  RDATA;
+    sc_in<sc_uint<2>>   RRESP;
+    sc_in<bool>         RVALID;
+    sc_out<bool>        RREADY;
+    sc_in<bool>         RLAST;
+
     // pull prev
     sc_in<bool> pull_prev_vld;
     sc_out<bool> pull_prev_rdy;
@@ -62,6 +82,10 @@ private:
     bool pull_prev_rdy_state = false;
 
     sc_event send_signal;
+
+    // AXI bridge event: fired by dependencies_received() to wake the AXI thread
+    sc_event start_axi_read;
+    void axi_read_thread();
 
     sc_event activate_push_prev_vld;
     sc_event activate_push_prev_end;
