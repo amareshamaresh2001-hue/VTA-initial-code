@@ -1,5 +1,5 @@
 {
-    "model_name": "simple_alu",
+    "model_name": "test_all_instructions",
     "en_ddr_lock": true,
     "en_cache": false,
     "en_prefetch": false,
