@@ -342,7 +342,6 @@ void ComputeModule::dependencies_received() {
                         else if (name.find("min") != std::string::npos) result = std::min(src_0, src_1);
                         else if (name.find("add") != std::string::npos) result = src_0 + src_1;
                         else if (name.find("shr") != std::string::npos) result = src_0 >> shft_by;
-                        else if (name.find("mul") != std::string::npos) result = src_0 * mul_by;
                         else                                            result = src_0; // Fallback
 
                         // Write the computed result back to the 32-bit accumulator.
