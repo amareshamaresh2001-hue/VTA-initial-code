@@ -83,10 +83,22 @@ private:
 
     sc_event send_signal;
 
-    // AXI bridge event: fired by dependencies_received() to wake the AXI thread
-    sc_event start_axi_read;
-    void axi_read_thread();
+    // Phase 2: AXI SC_METHOD handlers for LOAD UOP and LOAD ACC
+    enum compute_axi_state { c_idle, c_uop_addr, c_uop_data, c_acc_addr, c_acc_data };
+    sc_signal<compute_axi_state, SC_MANY_WRITERS> axi_state;
 
+    uint32_t c_axi_beats_remaining;
+    uint32_t c_axi_sram_idx;
+    uint32_t c_axi_addr_offset;
+    uint32_t c_axi_chunk_count;
+
+    uint32_t c_axi_y;
+    uint32_t c_axi_x;
+    uint32_t c_axi_burst_idx;
+    uint32_t c_axi_elem_base;
+    uint32_t c_axi_base_addr;
+
+    void process_axi_read_fsm();
     sc_event activate_push_prev_vld;
     sc_event activate_push_prev_end;
     sc_event activate_push_next_vld;

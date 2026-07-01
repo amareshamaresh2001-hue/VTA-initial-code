@@ -51,6 +51,7 @@ int sc_main(int, char*[]) {
     // ==========================================
     sc_trace(tf, vta.m3_ARVALID, "2_FETCHER/AXI_ARVALID");
     sc_trace(tf, vta.m3_ARREADY, "2_FETCHER/AXI_ARREADY");
+    sc_trace(tf, vta.m3_ARADDR,  "2_FETCHER/AXI_ARADDR");
     sc_trace(tf, vta.m3_RVALID,  "2_FETCHER/AXI_RVALID");
     sc_trace(tf, vta.m3_RREADY,  "2_FETCHER/AXI_RREADY");
     sc_trace(tf, vta.m3_RDATA,   "2_FETCHER/AXI_RDATA");
@@ -101,8 +102,8 @@ int sc_main(int, char*[]) {
     sc_trace(tf, vta.compute_c2s_vld_sig, "7_DEPENDENCIES/c2s_Compute_Ready");
     sc_trace(tf, vta.store_s2c_vld_sig,   "7_DEPENDENCIES/s2c_Store_Done");
 
-    // Run for 50 microseconds
-    sc_start(50000, SC_NS);
+    // Run for 5 microseconds
+    sc_start(5000, SC_NS);
 
     sc_close_vcd_trace_file(tf);
 

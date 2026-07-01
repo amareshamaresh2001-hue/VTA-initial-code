@@ -100,12 +100,23 @@ private:
     // Therefore, we use this sc_event to wake up a separate SC_THREAD that handles AXI.
     // =========================================================================
 
-    // start_axi_write: This event is fired by dependencies_received() when there is data to store.
-    sc_event start_axi_write;
+    // Phase 2: AXI SC_METHOD handlers for STORE OUT
+    enum store_axi_state { s_idle, s_out_addr, s_out_data, s_out_resp };
+    sc_signal<store_axi_state, SC_MANY_WRITERS> axi_state;
 
-    // axi_write_thread: A clock-driven SystemC thread. It sleeps until start_axi_write is triggered.
-    // Once awake, it handles the complex multi-cycle AXI write handshakes.
-    void axi_write_thread();
+    uint32_t s_axi_sram_idx;
+    uint32_t s_axi_dram_offset;
+    uint32_t s_axi_chunk_count;
+
+    uint32_t s_axi_y;
+    uint32_t s_axi_x;
+    uint32_t s_axi_x_size;
+    uint32_t s_axi_y_size;
+    uint32_t s_axi_stride;
+
+    uint32_t s_axi_base_addr;
+
+    void process_axi_write_fsm();
 
     sc_int<64> *prev_data = nullptr;
 

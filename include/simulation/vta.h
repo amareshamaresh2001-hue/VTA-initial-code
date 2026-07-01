@@ -10,7 +10,7 @@
 
 // --- STAGE 2: AXI HARDWARE IMPORTS ---
 #include "axi_interconnect.h"
-#include "axi_lite_slave.h"
+#include "axi4_full_slave.h"
 
 
 class VTA : public sc_module {
@@ -39,7 +39,7 @@ public: // Unavoidable: main.cpp needs to trace these for the VCD file
     // These are the physical hardware blocks provided by the teammate.
     // =========================================================================
     axi_interconnect *arbiter;
-    axi_lite_slave *dram;
+    axi4_full_slave *dram;
     
 public:
     sc_clock sys_clk;          // The global 10ns clock driving all AXI state machines

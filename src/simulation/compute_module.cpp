@@ -30,9 +30,11 @@ int ComputeModule::current_layer = 0;
 
 ComputeModule::ComputeModule(sc_module_name n) : Module(n) {
 
-    // AXI read thread - mirrors LoadModule pattern exactly
-    SC_THREAD(axi_read_thread);
-    sensitive << ACLK.pos();
+    // Pure SC_METHOD design: no SC_THREAD, no wait(), no while loops.
+    // All logic runs in event-driven SC_METHODs only.
+
+    SC_METHOD(process_axi_read_fsm);
+    sensitive << ACLK.pos() << ARESETN.neg();
 
     SC_METHOD(send_signal_handler);
     dont_initialize();
@@ -189,14 +191,41 @@ void ComputeModule::dependencies_received() {
         // printing and cleanup for this specific instruction.
     }
     else if (name == "LOAD UOP") {
-        // LOAD UOP: Fire the AXI thread to fetch micro-ops from DRAM via M1.
-        start_axi_read.notify(SC_ZERO_TIME);
-        return; // AXI thread will call finish.notify() when done
+        std::string sram_str = current->get_sram();
+        std::string dram_str = current->get_dram();
+        uint32_t sram_base = sram_str.empty() ? 0 : std::stoul(sram_str, nullptr, 16);
+        uint32_t dram_base = dram_str.empty() ? 0 : std::stoul(dram_str, nullptr, 16);
+        uint32_t x_size    = current->get_x_size();
+        
+        if (x_size == 0) { finish.notify(latency()); return; }
+
+        c_axi_base_addr = START_ADDR.read();
+        c_axi_beats_remaining = x_size;
+        c_axi_sram_idx = sram_base;
+        c_axi_addr_offset = dram_base * 4;
+
+        axi_state.write(c_uop_addr);
+        return;
     }
     else if (name == "LOAD ACC") {
-        // LOAD ACC: Fire the AXI thread to fetch biases from DRAM via M1.
-        start_axi_read.notify(SC_ZERO_TIME);
-        return; // AXI thread will call finish.notify() when done
+        std::string sram_str = current->get_sram();
+        std::string dram_str = current->get_dram();
+        uint32_t sram_base = sram_str.empty() ? 0 : std::stoul(sram_str, nullptr, 16);
+        uint32_t dram_base = dram_str.empty() ? 0 : std::stoul(dram_str, nullptr, 16);
+        uint32_t x_size    = current->get_x_size();
+        uint32_t y_size    = current->get_y_size() == 0 ? 1 : current->get_y_size();
+
+        if (x_size == 0) { finish.notify(latency()); return; }
+
+        c_axi_base_addr = START_ADDR.read();
+        c_axi_sram_idx = sram_base;
+        c_axi_addr_offset = dram_base * VTA_BLOCK_OUT * 4;
+        c_axi_y = 0;
+        c_axi_x = 0;
+        c_axi_burst_idx = 0;
+
+        axi_state.write(c_acc_addr);
+        return;
     }
     else if (name == "GEMM") {
         // GEMM: General Matrix Multiply. 
@@ -598,104 +627,106 @@ void ComputeModule::write_push_next_data_handler() {
     this->activate_push_next_end.notify(1, SC_NS);
 }
 
-// =========================================================================
-// --- AXI READ THREAD (M1) ---
-// Mirrors LoadModule::axi_read_thread exactly.
-// Handles LOAD UOP (micro-ops into uop_mem) and LOAD ACC (biases into acc_mem).
-// =========================================================================
-void ComputeModule::axi_read_thread() {
-    ARVALID.write(0);
-    RREADY.write(0);
+// Phase 2: process_axi_read_fsm replaces axi_read_thread()
+void ComputeModule::process_axi_read_fsm() {
+    if (!ARESETN.read()) {
+        axi_state.write(c_idle);
+        ARVALID.write(0);
+        RREADY.write(0);
+        return;
+    }
 
-    while (true) {
-        wait(start_axi_read);
+    switch (axi_state.read()) {
+        case c_idle:
+            break;
 
-        std::string name = current->get_name();
-
-        try {
-            std::string sram_str = current->get_sram();
-            std::string dram_str = current->get_dram();
-            uint32_t sram_base = sram_str.empty() ? 0 : std::stoul(sram_str, nullptr, 16);
-            uint32_t dram_base = dram_str.empty() ? 0 : std::stoul(dram_str, nullptr, 16);
-            uint32_t x_size    = current->get_x_size();
-            uint32_t y_size    = current->get_y_size() == 0 ? 1 : current->get_y_size();
-
-            if (x_size == 0) { finish.notify(latency()); continue; }
-
-            sc_uint<32> base_addr = START_ADDR.read();
-
-            if (name == "LOAD UOP") {
-                // Fetch x_size micro-ops (4 bytes each) from DRAM into uop_mem.
-                // We burst 4 beats at a time, each beat = 4 bytes = 1 micro-op.
-                uint32_t beats_remaining = x_size;
-                uint32_t sram_idx = sram_base;
-                uint32_t addr_offset = dram_base * 4; // byte address
-
-                while (beats_remaining > 0) {
-                    ARADDR.write(base_addr + addr_offset);
-                    ARLEN.write(3); // 4-beat burst
-
-                    ARVALID.write(1);
-                    do { wait(); } while (ARREADY.read() == 0);
+        case c_uop_addr:
+            if (c_axi_beats_remaining > 0) {
+                ARADDR.write(c_axi_base_addr + c_axi_addr_offset);
+                ARLEN.write(3); // 4-beat burst
+                ARVALID.write(1);
+                
+                if (ARREADY.read() == 1 && ARVALID.read() == 1) {
                     ARVALID.write(0);
-
-                    int chunk_count = 0;
-                    RREADY.write(1);
-                    while (chunk_count < 4) {
-                        wait();
-                        if (RVALID.read() == 1) {
-                            uint32_t data = RDATA.read().to_uint();
-                            if (sram_idx < UOP_BUFF_DEPTH)
-                                uop_mem[sram_idx] = data;
-                            sram_idx++;
-                            addr_offset += 4;
-                            chunk_count++;
-                            beats_remaining = (beats_remaining > 0) ? beats_remaining - 1 : 0;
-                        }
-                    }
-                    RREADY.write(0);
+                    c_axi_chunk_count = 0;
+                    axi_state.write(c_uop_data);
                 }
+            } else {
+                axi_state.write(c_idle);
+                finish.notify(latency()); // Let the scheduler know we finished
+            }
+            break;
 
-            } else if (name == "LOAD ACC") {
-                // Fetch bias tiles from DRAM into acc_mem.
-                // Each tile = VTA_BLOCK_OUT int32_t values = 16 * 4 = 64 bytes.
-                uint32_t sram_idx  = sram_base;
-                uint32_t addr_offset = dram_base * VTA_BLOCK_OUT * 4;
+        case c_uop_data:
+            RREADY.write(1);
+            if (RVALID.read() == 1 && RREADY.read() == 1) {
+                uint32_t data = RDATA.read().to_uint();
+                if (c_axi_sram_idx < UOP_BUFF_DEPTH) {
+                    uop_mem[c_axi_sram_idx] = data;
+                }
+                c_axi_sram_idx++;
+                c_axi_addr_offset += 4;
+                c_axi_chunk_count++;
+                c_axi_beats_remaining = (c_axi_beats_remaining > 0) ? c_axi_beats_remaining - 1 : 0;
 
-                for (uint32_t y = 0; y < y_size && sram_idx < ACC_BUFF_DEPTH; y++) {
-                    for (uint32_t x = 0; x < x_size && sram_idx < ACC_BUFF_DEPTH; x++) {
-                        // Each acc tile has VTA_BLOCK_OUT int32 = 16 beats of 4 bytes.
-                        // We burst 4 beats at a time, so 4 bursts per tile.
-                        for (int burst = 0; burst < VTA_BLOCK_OUT / 4; burst++) {
-                            ARADDR.write(base_addr + addr_offset);
-                            ARLEN.write(3);
-
-                            ARVALID.write(1);
-                            do { wait(); } while (ARREADY.read() == 0);
-                            ARVALID.write(0);
-
-                            int chunk_count = 0;
-                            RREADY.write(1);
-                            int elem_base = burst * 4;
-                            while (chunk_count < 4) {
-                                wait();
-                                if (RVALID.read() == 1) {
-                                    int32_t data = (int32_t)RDATA.read().to_uint();
-                                    if (sram_idx < ACC_BUFF_DEPTH)
-                                        acc_mem[sram_idx][elem_base + chunk_count] = data;
-                                    addr_offset += 4;
-                                    chunk_count++;
-                                }
-                            }
-                            RREADY.write(0);
-                        }
-                        sram_idx++;
-                    }
-                    sram_idx += current->get_stride();
+                if (RLAST.read() == 1 || c_axi_chunk_count == 4) {
+                    RREADY.write(0);
+                    axi_state.write(c_uop_addr);
                 }
             }
-        } catch (...) {}
+            break;
 
-        finish.notify(latency());
+        case c_acc_addr:
+            if (c_axi_y < (current->get_y_size() == 0 ? 1 : current->get_y_size()) && c_axi_sram_idx < ACC_BUFF_DEPTH) {
+                if (c_axi_x < current->get_x_size() && c_axi_sram_idx < ACC_BUFF_DEPTH) {
+                    if (c_axi_burst_idx < VTA_BLOCK_OUT / 4) {
+                        ARADDR.write(c_axi_base_addr + c_axi_addr_offset);
+                        ARLEN.write(3); // 4-beat burst
+                        ARVALID.write(1);
+
+                        if (ARREADY.read() == 1 && ARVALID.read() == 1) {
+                            ARVALID.write(0);
+                            c_axi_chunk_count = 0;
+                            c_axi_elem_base = c_axi_burst_idx * 4;
+                            axi_state.write(c_acc_data);
+                        }
+                    } else {
+                        // Finished all 4 bursts for this tile
+                        c_axi_sram_idx++;
+                        c_axi_x++;
+                        c_axi_burst_idx = 0;
+                        // re-eval loop conditions
+                    }
+                } else {
+                    // Finished x loop
+                    c_axi_sram_idx += current->get_stride();
+                    c_axi_y++;
+                    c_axi_x = 0;
+                    c_axi_burst_idx = 0;
+                }
+            } else {
+                // Completely finished
+                axi_state.write(c_idle);
+                finish.notify(latency());
+            }
+            break;
+
+        case c_acc_data:
+            RREADY.write(1);
+            if (RVALID.read() == 1 && RREADY.read() == 1) {
+                int32_t data = (int32_t)RDATA.read().to_uint();
+                if (c_axi_sram_idx < ACC_BUFF_DEPTH) {
+                    acc_mem[c_axi_sram_idx][c_axi_elem_base + c_axi_chunk_count] = data;
+                }
+                c_axi_addr_offset += 4;
+                c_axi_chunk_count++;
+
+                if (RLAST.read() == 1 || c_axi_chunk_count == 4) {
+                    RREADY.write(0);
+                    c_axi_burst_idx++;
+                    axi_state.write(c_acc_addr);
+                }
+            }
+            break;
     }
 }

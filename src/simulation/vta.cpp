@@ -35,9 +35,23 @@ VTA::VTA(
     sys_start_m3.write(0x0000C000); // Fetcher reads instructions from this region
     
     // --- INSTANTIATE ARBITER AND MAIN MEMORY ---
-    dram = new axi_lite_slave("main_memory"); 
+    dram = new axi4_full_slave("main_memory"); 
     dram->ACLK(sys_clk); 
     dram->ARESETN(sys_reset);
+
+    // --- PRE-LOAD MEMORY ---
+    // Pre-load the memory with instructions so the Fetcher can read them via AXI.
+    // The memory powers on randomized, so we must flash the code into it.
+    uint32_t mem_offset = 0x0000C000;
+    for (const auto& layer : encoded_splited_instructions) {
+        for (const auto& inst : layer.second) {
+            uint64_t part0 = std::get<1>(inst).to_uint64();
+            uint64_t part1 = std::get<2>(inst).to_uint64();
+            
+            for (int i = 0; i < 8; i++) dram->memory_array[mem_offset++] = (part0 >> (i * 8)) & 0xFF;
+            for (int i = 0; i < 8; i++) dram->memory_array[mem_offset++] = (part1 >> (i * 8)) & 0xFF;
+        }
+    }
     
     arbiter = new axi_interconnect("axi_arbiter");
     arbiter->ACLK(sys_clk);

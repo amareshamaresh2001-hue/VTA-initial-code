@@ -1,5 +1,5 @@
-#ifndef AXI_LITE_SLAVE_H
-#define AXI_LITE_SLAVE_H
+#ifndef AXI4_FULL_SLAVE_H
+#define AXI4_FULL_SLAVE_H
 
 #include <systemc.h>
 #include <cstdlib> // Required for rand()
@@ -7,7 +7,7 @@
 enum fsm_state { state_idle, state_ready, state_burst_write, state_response };
 enum read_fsm { r_idle, r_burst };
 
-SC_MODULE(axi_lite_slave) {
+SC_MODULE(axi4_full_slave) {
     sc_in<bool> ACLK, ARESETN;
 
     // --- CHANNELS ---
@@ -116,7 +116,7 @@ SC_MODULE(axi_lite_slave) {
         }
     }
 
-    SC_CTOR(axi_lite_slave) { 
+    SC_CTOR(axi4_full_slave) { 
         // Power-On SRAM Randomization 
         for (int i = 0; i < 65536; i++) {
             memory_array[i] = rand() % 256;

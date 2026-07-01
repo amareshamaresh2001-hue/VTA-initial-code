@@ -14,9 +14,11 @@ extern int8_t out_mem[ACC_BUFF_DEPTH][VTA_BLOCK_OUT];
 
 StoreModule::StoreModule(sc_module_name n) : Module(n) {
 
-    // --- STAGE 2: REGISTER AXI WRITE THREAD ---
-    SC_THREAD(axi_write_thread);
-    sensitive << ACLK.pos();
+    // --- STAGE 2: REGISTER AXI    // Pure SC_METHOD design: no SC_THREAD, no wait(), no while loops.
+    // All logic runs in event-driven SC_METHODs only.
+
+    SC_METHOD(process_axi_write_fsm);
+    sensitive << ACLK.pos() << ARESETN.neg();
 
     SC_METHOD(activate_push_prev_vld_handler);
     dont_initialize();
@@ -85,8 +87,34 @@ void StoreModule::dependencies_received() {
     // std::cout << sc_time_stamp() << " " << this->name() << " START EXECUTING " << current->get_layer() << " " << current->get_pc() << std::endl;
     
     // --- STAGE 2: AXI TRIGGER ---
-    // Instead of finishing immediately, trigger the AXI write thread to push data back to DRAM.
-    start_axi_write.notify(SC_ZERO_TIME);
+    if (current->get_name().find("STORE") != std::string::npos && current->get_name() != "NOP-STORE-STAGE") {
+        std::string dram_str = current->get_dram();
+        std::string sram_str = current->get_sram();
+        uint32_t dram_base = dram_str.empty() ? 0 : std::stoul(dram_str, nullptr, 16);
+        uint32_t sram_base = sram_str.empty() ? 0 : std::stoul(sram_str, nullptr, 16);
+        uint32_t y_size    = current->get_y_size();
+        uint32_t x_size    = current->get_x_size();
+        uint32_t stride    = current->get_stride();
+
+        if (x_size == 0 || y_size == 0) {
+            finish.notify(latency());
+            return;
+        }
+
+        s_axi_sram_idx = sram_base;
+        s_axi_dram_offset = dram_base * VTA_BLOCK_OUT; // 16 bytes per tile
+        s_axi_y = 0;
+        s_axi_x = 0;
+        s_axi_x_size = x_size;
+        s_axi_y_size = y_size;
+        s_axi_stride = stride;
+        s_axi_base_addr = START_ADDR.read();
+
+        axi_state.write(s_out_addr);
+        return; // Let FSM take over
+    }
+
+    finish.notify(latency());
 }
 
 // =========================================================================
@@ -94,113 +122,6 @@ void StoreModule::dependencies_received() {
 // This is the cycle-accurate hardware model for the Store module.
 // It uses 4-beat bursts to remain compatible with the teammate's Memory.
 // =========================================================================
-void StoreModule::axi_write_thread() {
-    // 0. HARDWARE INITIALIZATION
-    AWVALID.write(0); 
-    WVALID.write(0); 
-    WLAST.write(0); 
-    BREADY.write(0);
-
-    while (true) {
-        // 1. SLEEP UNTIL INSTRUCTION ARRIVES
-        wait(start_axi_write);
-
-        std::string name = current->get_name();
-        
-        // Only proceed if this is actually a STORE instruction (not a NOP)
-        if (name.find("STORE") != std::string::npos && name != "NOP-STORE-STAGE") {
-            
-            try {
-                // =====================================================================
-                // FIX 1: Read the DRAM byte address FROM THE INSTRUCTION, not from
-                // START_ADDR. The STORE instruction carries the exact physical address
-                // in DRAM where the output tensor must be written.
-                // HLS ref: memop_dram_T dram_idx = insn.dram_base;
-                // =====================================================================
-                std::string dram_str = current->get_dram();
-                std::string sram_str = current->get_sram();
-                uint32_t dram_base = dram_str.empty() ? 0 : std::stoul(dram_str, nullptr, 16);
-                uint32_t sram_base = sram_str.empty() ? 0 : std::stoul(sram_str, nullptr, 16);
-                uint32_t y_size    = current->get_y_size();
-                uint32_t x_size    = current->get_x_size();
-                uint32_t stride    = current->get_stride();
-
-                if (x_size == 0 || y_size == 0) {
-                    finish.notify(latency());
-                    continue;
-                }
-
-                // FIX 2: Use the instruction's dram_base as the starting DRAM byte address.
-                uint32_t current_address = dram_base;
-
-                // FIX 3: sram_idx is a simple linear counter.
-                // HLS ref: sram_idx = insn.sram_base; sram_idx += x_size per row.
-                uint32_t sram_idx = sram_base;
-
-                // Each OUT tile = VTA_BLOCK_OUT int8 values = 16 bytes = 4 x 32-bit AXI beats = 1 burst
-                const uint32_t OUT_TILE_BYTES = VTA_BLOCK_OUT; // 16
-
-                // 2D DMA TRANSFER LOOP
-                // HLS ref: for (int y = 0; y < y_size; y++) { memcpy(..., x_size * VTA_OUT_ELEM_BYTES); dram_idx += x_stride; }
-                for (uint32_t y = 0; y < y_size; y++) {
-                    
-                    for (uint32_t x = 0; x < x_size; x++) {
-                        
-                        // --- AXI ADDRESS PHASE ---
-                        // AWADDR = row_base + x * tile_bytes (16 bytes per OUT tile)
-                        AWADDR.write(current_address + x * OUT_TILE_BYTES);
-                        AWLEN.write(3); // Always 4 beats per OUT tile
-
-                        // STRICT ADDRESS HANDSHAKE
-                        AWVALID.write(1);
-                        do { wait(); } while (AWREADY.read() == 0);
-                        AWVALID.write(0);
-
-                        // --- AXI DATA PHASE ---
-                        // FIX 4: Write WDATA FIRST, then assert WVALID.
-                        // Each 4-beat burst sends 16 bytes of one OUT tile (sram_idx + x).
-                        // FIX (Bug 3): sram_idx is a running counter; use (sram_idx + x) per tile.
-                        for (uint32_t i = 0; i < 4; i++) {
-                            uint32_t cur_sram = sram_idx + x;
-                            uint32_t data_chunk = 0;
-                            if (cur_sram < ACC_BUFF_DEPTH) {
-                                data_chunk |= ((uint32_t)(out_mem[cur_sram][i*4+0] & 0xFF)) << 0;
-                                data_chunk |= ((uint32_t)(out_mem[cur_sram][i*4+1] & 0xFF)) << 8;
-                                data_chunk |= ((uint32_t)(out_mem[cur_sram][i*4+2] & 0xFF)) << 16;
-                                data_chunk |= ((uint32_t)(out_mem[cur_sram][i*4+3] & 0xFF)) << 24;
-                            }
-                            // Set data stable on the bus first, THEN assert valid
-                            WDATA.write(data_chunk);
-                            WLAST.write(i == 3 ? 1 : 0);
-                            WVALID.write(1);
-                            // Hold WVALID until slave accepts this beat
-                            do { wait(); } while (WREADY.read() == 0);
-                        }
-                        WVALID.write(0);
-                        WLAST.write(0);
-
-                        // --- AXI RESPONSE PHASE ---
-                        // Wait for the slave (memory) to confirm the write was accepted
-                        BREADY.write(1);
-                        while (BVALID.read() == 0) { wait(); }
-                        BREADY.write(0);
-                    }
-
-                    // FIX 5: Advance DRAM by stride TILES (stride * 16 bytes) per row.
-                    // HLS ref: dram_idx += x_stride
-                    current_address += stride * OUT_TILE_BYTES;
-
-                    // FIX 6: Advance sram_idx linearly by x_size (NOT recalculated per beat).
-                    // HLS ref: sram_idx += x_size
-                    sram_idx += x_size;
-                }
-            } catch (...) {
-                std::cout << "[AXI WRITE ERROR] Failed to parse memory addresses." << std::endl;
-            }
-        }
-        finish.notify(latency());
-    }
-}
 
 void StoreModule::finalize_instruction() {
     this->result_data = new sc_int<32>(5);
@@ -213,7 +134,7 @@ void StoreModule::push_dependencies() {
         this->push_prev_vld_state = true;
         activate_push_prev_vld.notify(1, SC_NS);
     } else {
-        // std::cout << sc_time_stamp() << " FINISH STORE ID=" << current->get_pc() << std::endl;
+        std::cout << sc_time_stamp() << " FINISH STORE ID=" << current->get_pc() << " (AXI Phase 2)" << std::endl;
         if (result_data != nullptr)
             delete result_data;
         if (prev_data != nullptr)
@@ -307,9 +228,87 @@ void StoreModule::push_prev_rdy_handler() {
 }
 
 void StoreModule::write_push_prev_data_handler() {
-    // std::cout << sc_time_stamp() << " STORE SEND DATA " << this->current->id << std::endl;
     this->push_prev_data.write(this->current->get_pc());
-
+    
     this->push_prev_end_state = true;
     this->activate_push_prev_end.notify(1, SC_NS);
+}
+
+// Phase 2: process_axi_write_fsm
+void StoreModule::process_axi_write_fsm() {
+    if (!ARESETN.read()) {
+        axi_state.write(s_idle);
+        AWVALID.write(0);
+        WVALID.write(0);
+        WLAST.write(0);
+        BREADY.write(0);
+        return;
+    }
+
+    switch (axi_state.read()) {
+        case s_idle:
+            break;
+
+        case s_out_addr:
+            if (s_axi_y < s_axi_y_size) {
+                if (s_axi_x < s_axi_x_size) {
+                    AWADDR.write(s_axi_base_addr + s_axi_dram_offset);
+                    AWLEN.write(3); // 4-beat burst = 16 bytes = 1 tile
+                    AWVALID.write(1);
+
+                    if (AWREADY.read() == 1 && AWVALID.read() == 1) {
+                        AWVALID.write(0);
+                        s_axi_chunk_count = 0;
+                        BREADY.write(1);
+                        axi_state.write(s_out_data);
+                    }
+                } else {
+                    s_axi_dram_offset += (s_axi_stride - s_axi_x_size) * VTA_BLOCK_OUT; // 16 bytes per tile
+                    s_axi_x = 0;
+                    s_axi_y++;
+                }
+            } else {
+                axi_state.write(s_idle);
+                finish.notify(latency());
+            }
+            break;
+
+        case s_out_data:
+            {
+                uint32_t c0 = out_mem[s_axi_sram_idx][s_axi_chunk_count * 4 + 0] & 0xFF;
+                uint32_t c1 = out_mem[s_axi_sram_idx][s_axi_chunk_count * 4 + 1] & 0xFF;
+                uint32_t c2 = out_mem[s_axi_sram_idx][s_axi_chunk_count * 4 + 2] & 0xFF;
+                uint32_t c3 = out_mem[s_axi_sram_idx][s_axi_chunk_count * 4 + 3] & 0xFF;
+                uint32_t word = c0 | (c1 << 8) | (c2 << 16) | (c3 << 24);
+                
+                WDATA.write(word);
+                WVALID.write(1);
+                
+                if (s_axi_chunk_count == 3) {
+                    WLAST.write(1);
+                } else {
+                    WLAST.write(0);
+                }
+
+                if (WREADY.read() == 1 && WVALID.read() == 1) {
+                    s_axi_chunk_count++;
+                    s_axi_dram_offset += 4;
+                    if (s_axi_chunk_count == 4) {
+                        WVALID.write(0);
+                        WLAST.write(0);
+                        axi_state.write(s_out_resp);
+                    }
+                }
+            }
+            break;
+
+        case s_out_resp:
+            if (BVALID.read() == 1 && BREADY.read() == 1) {
+                BREADY.write(0);
+                s_axi_sram_idx++;
+                s_axi_x++;
+                axi_state.write(s_out_addr);
+            }
+            break;
+    }
 }

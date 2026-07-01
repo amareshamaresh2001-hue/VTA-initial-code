@@ -85,18 +85,32 @@ public:
 
 private:
 
-    // =========================================================================
-    // --- STAGE 2: AXI TO EVENT-DRIVEN BRIDGE ---
-    // We cannot use wait() inside dependencies_received() because it is an SC_METHOD.
-    // Therefore, we use this sc_event to wake up a separate SC_THREAD that handles AXI.
-    // =========================================================================
+    // Phase 2: AXI SC_METHOD handlers for LOAD INP and LOAD WGT
+    enum load_axi_state { l_idle, l_inp_addr, l_inp_data, l_wgt_addr, l_wgt_data };
+    sc_signal<load_axi_state, SC_MANY_WRITERS> axi_state;
 
-    // start_axi_read: This event is fired by dependencies_received() when an instruction arrives.
-    sc_event start_axi_read;
+    uint32_t l_axi_sram_idx;
+    uint32_t l_axi_dram_offset;
+    uint32_t l_axi_chunk_count;
+    uint32_t l_axi_burst_idx;
+    uint32_t l_axi_elem_base;
 
-    // axi_read_thread: A clock-driven SystemC thread. It sleeps until start_axi_read is triggered.
-    // Once awake, it handles the complex multi-cycle AXI handshakes and loop logic.
-    void axi_read_thread();
+    uint32_t l_axi_y;
+    uint32_t l_axi_x;
+    uint32_t l_axi_x_size;
+    uint32_t l_axi_y_size;
+    uint32_t l_axi_stride;
+
+    uint32_t l_axi_x0_pad;
+    uint32_t l_axi_x1_pad;
+    uint32_t l_axi_y0_pad;
+    uint32_t l_axi_y1_pad;
+    uint32_t l_axi_x_width;
+    
+    uint32_t l_axi_base_addr;
+
+    void process_axi_read_fsm();
+
 
     sc_int<64> *next_data = nullptr;
 
