@@ -112,10 +112,6 @@ void Module::read_i_queue_data_handler() {
     if (current_instruction_part.size() == 2) {
         current = new Instruction({current_instruction_part[0], current_instruction_part[1]});
         current_instruction_part.clear();
-        
-        if (this->current->get_pc() > 175) {
-            std::cout<<"";
-        }
 
         check_dep.notify(SC_ZERO_TIME);
     } else {

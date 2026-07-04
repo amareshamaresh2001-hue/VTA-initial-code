@@ -1,5 +1,5 @@
 {
-    "model_name": "resnet_18_layers/layer_0",
+    "model_name": "resnet_18_layers/layer_1",
     "instruction_base_addr": 400000000,
     "memory_latency": 1,
     "architecture": {

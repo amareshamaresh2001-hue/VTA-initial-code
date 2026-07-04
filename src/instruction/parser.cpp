@@ -166,8 +166,8 @@ void Parser::load_layers_instruction() {
         std::string layer = instruction.get_layer();
         splited_instructions[layer].push_back(instruction);
     }
-    for (auto const& [key, val] : this->splited_instructions) {
-        keys.push_back(key);
+    for (int i = 0; i < static_cast<int>(this->splited_instructions.size()); i++) {
+        keys.push_back(concatStringsModern("layer_", std::to_string(i)));
     }
 }
 
