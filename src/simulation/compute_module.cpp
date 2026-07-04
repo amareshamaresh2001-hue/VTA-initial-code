@@ -140,6 +140,7 @@ void ComputeModule::check_dependencies() {
             this->pull_prev_rdy_state = true;
             activate_pull_prev_rdy.notify(1, SC_NS);
         } else {
+            std::cout << "[COMPUTE] WAITING for PREV dependency (l2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_prev = true;
         }
     }
@@ -148,6 +149,7 @@ void ComputeModule::check_dependencies() {
             this->pull_next_rdy_state = true;
             activate_pull_next_rdy.notify(1, SC_NS);
         } else {
+            std::cout << "[COMPUTE] WAITING for NEXT dependency (s2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_next = true;
         }
     } 
@@ -156,12 +158,14 @@ void ComputeModule::check_dependencies() {
             this->pull_prev_rdy_state = true;
             activate_pull_prev_rdy.notify(1, SC_NS);
         } else {
+            std::cout << "[COMPUTE] WAITING for PREV dependency (l2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_prev = true;
         }
         if (this->pull_next_vld.read()) {
             this->pull_next_rdy_state = true;
             activate_pull_next_rdy.notify(1, SC_NS);
         } else {
+            std::cout << "[COMPUTE] WAITING for NEXT dependency (s2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_next = true;
         }
     } else {
@@ -326,12 +330,12 @@ void ComputeModule::dependencies_received() {
         int dst_offset_out = 0, src_offset_out = 0;
 
         // --- OUTER LOOP ---
-        for (int it_out = 0; it_out < current->get_outer_loop_iter(); it_out++) {
+        for (int it_out = 0; it_out < current->get_gemm_outer_loop_iter(); it_out++) {
             int dst_offset_in = dst_offset_out;
             int src_offset_in = src_offset_out;
 
             // --- INNER LOOP ---
-            for (int it_in = 0; it_in < current->get_inner_loop_iter(); it_in++) {
+            for (int it_in = 0; it_in < current->get_gemm_inner_loop_iter(); it_in++) {
 
                 // --- MICRO-OP LOOP ---
                 for (int upc = current->get_range_0(); upc < current->get_range_1(); upc++) {
@@ -395,6 +399,7 @@ void ComputeModule::dependencies_received() {
     // After all computation is complete (or instantly for NOP), we notify the SystemC scheduler 
     // that this module has finished its work and consumed simulated time.
     // The latency() function calculates how many nanoseconds this operation took based on the hardware model.
+    std::cout << "[COMPUTE] Finished instruction: " << name << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
     finish.notify(latency());
 }
 
@@ -403,6 +408,7 @@ void ComputeModule::finalize_instruction() {
     
     if (this->current->get_name() =="FINISH") {
         std::cout << sc_time_stamp() << "\t\t" << "---------------------------- FINISH LAYER " << ComputeModule::current_layer++ << " ----------------------------" << std::endl;
+        sc_stop(); // Stop the simulation exactly when the layer completes
         
         if (result_data != nullptr)
             delete result_data;

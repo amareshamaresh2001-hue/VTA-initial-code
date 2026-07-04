@@ -69,6 +69,7 @@ void StoreModule::check_dependencies() {
             this->pull_prev_rdy_state = true;
             activate_pull_prev_rdy.notify(1, SC_NS);
         } else {
+            std::cout << "[STORE] WAITING for PREV dependency (c2s) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_prev = true;
         }
     } else {
@@ -114,6 +115,7 @@ void StoreModule::dependencies_received() {
         return; // Let FSM take over
     }
 
+    std::cout << "[STORE] Finished instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
     finish.notify(latency());
 }
 
@@ -280,23 +282,28 @@ void StoreModule::process_axi_write_fsm() {
                 uint32_t c2 = out_mem[s_axi_sram_idx][s_axi_chunk_count * 4 + 2] & 0xFF;
                 uint32_t c3 = out_mem[s_axi_sram_idx][s_axi_chunk_count * 4 + 3] & 0xFF;
                 uint32_t word = c0 | (c1 << 8) | (c2 << 16) | (c3 << 24);
-                
+
                 WDATA.write(word);
                 WVALID.write(1);
                 
-                if (s_axi_chunk_count == 3) {
+                bool is_last = (s_axi_chunk_count == 3);
+                if (is_last) {
                     WLAST.write(1);
                 } else {
                     WLAST.write(0);
                 }
 
                 if (WREADY.read() == 1 && WVALID.read() == 1) {
-                    s_axi_chunk_count++;
-                    s_axi_dram_offset += 4;
-                    if (s_axi_chunk_count == 4) {
-                        WVALID.write(0);
-                        WLAST.write(0);
-                        axi_state.write(s_out_resp);
+                    if (is_last) {
+                        if (WLAST.read() == 1) {
+                            WVALID.write(0);
+                            WLAST.write(0);
+                            s_axi_dram_offset += 4;
+                            axi_state.write(s_out_resp);
+                        }
+                    } else {
+                        s_axi_chunk_count++;
+                        s_axi_dram_offset += 4;
                     }
                 }
             }

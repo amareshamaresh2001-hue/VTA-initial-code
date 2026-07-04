@@ -108,8 +108,7 @@ void LoadModule::dependencies_received() { //
                 finish.notify(latency());
                 return;
             } else {
-                std::cout << sc_time_stamp() << " " << this->name() << " PROCESSING INSTRUCTION: " << name 
-                          << " x_size=" << x_size << " y_size=" << y_size << " pc=" << current->get_pc() << std::endl;
+                // Print removed for speed
             }
 
             // sram_idx: linear SRAM tile counter, matches HLS ref: sram_idx = insn.sram_base

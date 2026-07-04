@@ -16,9 +16,11 @@ int sc_main(int, char*[]) {
     VTA vta("vta", parser.keys, parser.encoded_splited_instructions);
 
     // --- SETUP MEMORY (DUMP INSTRUCTIONS TO DRAM) ---
-    // The supervisor wants Fetcher to read from memory.
-    // Fetcher start address is 0x0000C000.
-    uint32_t dram_offset = 0x0000C000;
+
+    // Fetcher start address from JSON configuration
+    auto& sys_config = PlatformConfig::getInstance();
+    uint32_t dram_offset = sys_config.instruction_base_addr;
+
     for (const auto& key : parser.keys) {
         for (const auto& instruction : parser.encoded_splited_instructions[key]) {
             uint64_t part0 = std::get<1>(instruction).to_uint64();
@@ -55,8 +57,13 @@ int sc_main(int, char*[]) {
     sc_trace(tf, vta.m3_RVALID,  "2_FETCHER/AXI_RVALID");
     sc_trace(tf, vta.m3_RREADY,  "2_FETCHER/AXI_RREADY");
     sc_trace(tf, vta.m3_RDATA,   "2_FETCHER/AXI_RDATA");
+    
+    sc_trace(tf, vta.fetcher->trace_expected_part0, "2_FETCHER/VALIDATION_expected_part0");
+    sc_trace(tf, vta.fetcher->trace_expected_part1, "2_FETCHER/VALIDATION_expected_part1");
+    sc_trace(tf, vta.fetcher->trace_fetched_part0, "2_FETCHER/VALIDATION_fetched_part0");
+    sc_trace(tf, vta.fetcher->trace_fetched_part1, "2_FETCHER/VALIDATION_fetched_part1");
 
-    // ==========================================
+    // --- 3. QUEUES / DISPATCH ---==========================================
     // 3. DISPATCH ROUTING (Fetcher -> Modules)
     // ==========================================
     sc_trace(tf, vta.fetcher_l_queue_vld_sig, "3_DISPATCH/to_LOAD_vld");
@@ -69,8 +76,9 @@ int sc_main(int, char*[]) {
     sc_trace(tf, vta.s_queue_store_data,      "3_DISPATCH/to_STORE_data");
 
     // ==========================================
-    // 4. LOAD MODULE (Data Fetch)
+    // 4. LOAD MODULE (AXI Master 0)
     // ==========================================
+    sc_trace(tf, vta.m0_ARADDR,  "4_LOAD/AXI_ARADDR");
     sc_trace(tf, vta.m0_ARVALID, "4_LOAD/AXI_ARVALID");
     sc_trace(tf, vta.m0_ARREADY, "4_LOAD/AXI_ARREADY");
     sc_trace(tf, vta.m0_RVALID,  "4_LOAD/AXI_RVALID");
@@ -78,21 +86,27 @@ int sc_main(int, char*[]) {
     sc_trace(tf, vta.m0_RDATA,   "4_LOAD/AXI_RDATA");
 
     // ==========================================
-    // 5. COMPUTE MODULE (UOP/Bias Fetch)
+    // 5. COMPUTE MODULE (AXI Master 1)
     // ==========================================
+    sc_trace(tf, vta.m1_ARADDR,  "5_COMPUTE/AXI_ARADDR");
     sc_trace(tf, vta.m1_ARVALID, "5_COMPUTE/AXI_ARVALID");
     sc_trace(tf, vta.m1_ARREADY, "5_COMPUTE/AXI_ARREADY");
     sc_trace(tf, vta.m1_RVALID,  "5_COMPUTE/AXI_RVALID");
     sc_trace(tf, vta.m1_RREADY,  "5_COMPUTE/AXI_RREADY");
+    sc_trace(tf, vta.m1_RDATA,   "5_COMPUTE/AXI_RDATA");
 
     // ==========================================
     // 6. STORE MODULE (Result Write)
     // ==========================================
+    sc_trace(tf, vta.m2_AWADDR,  "6_STORE/AXI_AWADDR");
     sc_trace(tf, vta.m2_AWVALID, "6_STORE/AXI_AWVALID");
     sc_trace(tf, vta.m2_AWREADY, "6_STORE/AXI_AWREADY");
-    sc_trace(tf, vta.m2_WVALID,  "6_STORE/AXI_WVALID");
     sc_trace(tf, vta.m2_WDATA,   "6_STORE/AXI_WDATA");
+    sc_trace(tf, vta.m2_WVALID,  "6_STORE/AXI_WVALID");
+    sc_trace(tf, vta.m2_WREADY,  "6_STORE/AXI_WREADY");
+    sc_trace(tf, vta.m2_WLAST,   "6_STORE/AXI_WLAST");
     sc_trace(tf, vta.m2_BVALID,  "6_STORE/AXI_BVALID");
+    sc_trace(tf, vta.m2_BREADY,  "6_STORE/AXI_BREADY");
 
     // ==========================================
     // 7. PIPELINE DEPENDENCY QUEUES
@@ -102,9 +116,16 @@ int sc_main(int, char*[]) {
     sc_trace(tf, vta.compute_c2s_vld_sig, "7_DEPENDENCIES/c2s_Compute_Ready");
     sc_trace(tf, vta.store_s2c_vld_sig,   "7_DEPENDENCIES/s2c_Store_Done");
 
-    // Run for 5 microseconds
-    sc_start(5000, SC_NS);
-
+    // Run simulation
+    int ms = 0;
+    while (!sc_end_of_simulation_invoked()) {
+        sc_start(1, SC_MS);
+        if (ms % 50 == 0) std::cout << "Simulated Time: " << sc_time_stamp() << std::endl;
+        ms++;
+    }
+    std::cout << "\n======================================================\n";
+    std::cout << "  SIMULATION FINISHED SUCCESSFULLY AT " << sc_time_stamp() << "\n";
+    std::cout << "======================================================\n" << std::endl;
     sc_close_vcd_trace_file(tf);
 
     return 0;
