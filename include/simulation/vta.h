@@ -45,10 +45,9 @@ public:
     sc_clock sys_clk;          // The global 10ns clock driving all AXI state machines
     sc_signal<bool> sys_reset; // The global reset signal
 
-    // =========================================================================
-    // --- STAGE 2: AXI MOTHERBOARD WIRING (COPPER TRACES) ---
+    
     // We must declare physical signals (wires) to connect the ports of our modules.
-    // =========================================================================
+    
 
     // 1. Traces between the Arbiter and the Main Memory
     sc_signal<sc_uint<32>> sys_AWADDR, sys_WDATA, sys_ARADDR, sys_RDATA;

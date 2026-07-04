@@ -18,9 +18,7 @@ VTA::VTA(
     compute = new ComputeModule("Compute");
     store = new StoreModule("Store");
 
-    // =========================================================================
-    // --- STAGE 2: AXI HARDWARE INSTANTIATION & WIRING ---
-    // =========================================================================
+    
 
     // Turn off Reset (Active Low) so the hardware turns on immediately
     sys_reset.write(1);
@@ -32,7 +30,7 @@ VTA::VTA(
     sys_start_m0.write(0x00000000);
     sys_start_m1.write(0x00004000); // Compute module reads UOPs and biases from this region
     sys_start_m2.write(0x00008000);
-    sys_start_m3.write(0x0000C000); // Fetcher reads instructions from this region
+    sys_start_m3.write(PlatformConfig::getInstance().instruction_base_addr); // Fetcher reads instructions from this region
     
     // --- INSTANTIATE ARBITER AND MAIN MEMORY ---
     dram = new axi4_full_slave("main_memory"); 
@@ -42,7 +40,7 @@ VTA::VTA(
     // --- PRE-LOAD MEMORY ---
     // Pre-load the memory with instructions so the Fetcher can read them via AXI.
     // The memory powers on randomized, so we must flash the code into it.
-    uint32_t mem_offset = 0x0000C000;
+    uint32_t mem_offset = PlatformConfig::getInstance().instruction_base_addr;
     for (const auto& layer : encoded_splited_instructions) {
         for (const auto& inst : layer.second) {
             uint64_t part0 = std::get<1>(inst).to_uint64();

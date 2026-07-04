@@ -97,6 +97,14 @@ private:
             load_cycles = config["load_cycles"];
             load_weigts_cycles = config["load_weigts_cycles"];
             store_cycles = config["store_cycles"];
+            
+            // Check if instruction_base_addr exists, default to 0x0000C000 if not
+            if (config.contains("instruction_base_addr")) {
+                instruction_base_addr = config["instruction_base_addr"];
+            } else {
+                instruction_base_addr = 0x0000C000;
+            }
+
             granulatity = magic_enum::enum_cast<Granularity>(std::string(config["granulatity"])).value();
         }
     }
@@ -107,6 +115,7 @@ private:
 
 public:
     std::string model_name;
+    uint32_t instruction_base_addr;
     bool en_ddr_lock;
     bool en_cache;
     bool en_prefetch;

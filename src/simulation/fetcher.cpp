@@ -9,7 +9,8 @@ Fetcher::Fetcher(
     this->encoded_splited_instructions = encoded_splited_instructions;
     this->current_layer = 0;
 
-    SC_THREAD(axi_read_thread);
+    SC_METHOD(process_axi_read_fsm);
+    dont_initialize();
     sensitive << ACLK.pos();
 
     SC_METHOD(load_layer_instructions);
@@ -92,99 +93,96 @@ void Fetcher::load_layer_instructions() {
     do_fetch_layer = true;
 }
 
-void Fetcher::axi_read_thread() {
-    ARVALID.write(0);
-    RREADY.write(0);
-    ARADDR.write(0);
-    ARLEN.write(0);
-    
-    uint32_t dram_instruction_offset = 0;
-
-    while (true) {
-        wait(); // Wait for ACLK
-
-        if (!ARESETN.read()) {
-            ARVALID.write(0);
-            RREADY.write(0);
-            dram_instruction_offset = 0;
-            if (do_fetch_layer) {
-                do_fetch_layer = false;
-            }
-            continue;
-        }
-
+void Fetcher::process_axi_read_fsm() {
+    if (!ARESETN.read()) {
+        ARVALID.write(0);
+        RREADY.write(0);
+        f_axi_dram_offset = 0;
+        axi_state.write(f_idle);
         if (do_fetch_layer) {
             do_fetch_layer = false;
-            
-            int num_instructions = encoded_splited_instructions[layers[current_layer]].size();
+        }
+        return;
+    }
 
-            for (int i = 0; i < num_instructions; i++) {
-                // The expected instruction type from the parser (for routing)
-                auto expected_inst = encoded_splited_instructions[layers[current_layer]][i];
-                InstrType type = std::get<0>(expected_inst);
+    switch (axi_state.read()) {
+        case f_idle:
+            if (do_fetch_layer) {
+                do_fetch_layer = false;
+                f_axi_num_inst = encoded_splited_instructions[layers[current_layer]].size();
+                f_axi_inst_idx = 0;
+                if (f_axi_num_inst > 0) {
+                    axi_state.write(f_addr);
+                } else {
+                    current_layer++;
+                    load.notify(1, SC_NS);
+                }
+            }
+            break;
 
-                uint64_t part0 = 0;
-                uint64_t part1 = 0;
+        case f_addr:
+            ARADDR.write(START_ADDR.read() + f_axi_dram_offset);
+            ARLEN.write(3); // 4 beats - 1
+            ARVALID.write(1);
+            RREADY.write(1);
 
-                // --- ADDRESS PHASE (4-beat burst for 16 bytes) ---
-                ARADDR.write(START_ADDR.read() + dram_instruction_offset);
-                ARLEN.write(3); // 4 beats - 1
-                ARVALID.write(1);
-                
-                do {
-                    wait();
-                } while (ARREADY.read() == 0);
+            if (ARREADY.read() == 1 && ARVALID.read() == 1) {
                 ARVALID.write(0);
+                f_axi_chunk_count = 0;
+                f_axi_part0 = 0;
+                f_axi_part1 = 0;
+                axi_state.write(f_data);
+            }
+            break;
 
-                // --- DATA PHASE ---
-                RREADY.write(1);
-                int chunk_count = 0;
+        case f_data:
+            if (RVALID.read() == 1 && RREADY.read() == 1) {
+                uint32_t data_chunk = RDATA.read().to_uint();
                 
-                while (chunk_count < 4) {
-                    wait();
-                    if (RVALID.read() == 1) {
-                        uint32_t data_chunk = RDATA.read().to_uint();
-                        
-                        // Reconstruct the 128-bit instruction payload
-                        if (chunk_count == 0) part0 |= ((uint64_t)data_chunk << 0);
-                        if (chunk_count == 1) part0 |= ((uint64_t)data_chunk << 32);
-                        if (chunk_count == 2) part1 |= ((uint64_t)data_chunk << 0);
-                        if (chunk_count == 3) part1 |= ((uint64_t)data_chunk << 32);
-                        
-                        chunk_count++;
-                        dram_instruction_offset += 4;
+                // Reconstruct the 128-bit instruction payload
+                if (f_axi_chunk_count == 0) f_axi_part0 |= ((uint64_t)data_chunk << 0);
+                if (f_axi_chunk_count == 1) f_axi_part0 |= ((uint64_t)data_chunk << 32);
+                if (f_axi_chunk_count == 2) f_axi_part1 |= ((uint64_t)data_chunk << 0);
+                if (f_axi_chunk_count == 3) f_axi_part1 |= ((uint64_t)data_chunk << 32);
+                
+                f_axi_chunk_count++;
+                f_axi_dram_offset += 4;
+
+                if (f_axi_chunk_count == 4) {
+                    RREADY.write(0);
+                    
+                    auto expected_inst = encoded_splited_instructions[layers[current_layer]][f_axi_inst_idx];
+                    InstrType type = std::get<0>(expected_inst);
+                    uint64_t expected_part0 = std::get<1>(expected_inst).to_uint64();
+                    uint64_t expected_part1 = std::get<2>(expected_inst).to_uint64();
+
+                    parser_inst_part0.write(expected_part0);
+                    parser_inst_part1.write(expected_part1);
+                    uint64_t parser_part0 = std::get<1>(expected_inst);
+                    uint64_t parser_part1 = std::get<2>(expected_inst);
+
+                    trace_expected_part0.write(parser_part0);
+                    trace_expected_part1.write(parser_part1);
+                    trace_fetched_part0.write(f_axi_part0);
+                    trace_fetched_part1.write(f_axi_part1);
+                    if (f_axi_part0 != expected_part0 || f_axi_part1 != expected_part1) {
+                        std::cout << "[FETCHER ERROR] Mismatch at offset " << std::hex << (f_axi_dram_offset - 16) << "!" << std::endl;
+                    }
+
+                    // Push the physically fetched instruction bits to the queue
+                    this->instructions.push({type, f_axi_part0, f_axi_part1});
+
+                    f_axi_inst_idx++;
+                    if (f_axi_inst_idx < f_axi_num_inst) {
+                        axi_state.write(f_addr);
+                    } else {
+                        axi_state.write(f_idle);
+                        current_layer++;
+                        load.notify(1, SC_NS);
                     }
                 }
-                RREADY.write(0);
-
-                // Validate (Requested by supervisor to prove AI isn't faking it):
-                // We know expected bits: std::get<1>(expected_inst) and std::get<2>(expected_inst)
-                // The AXI read successfully pulled them from DRAM into part0 and part1.
-                uint64_t expected_part0 = std::get<1>(expected_inst).to_uint64();
-                uint64_t expected_part1 = std::get<2>(expected_inst).to_uint64();
-
-                parser_inst_part0.write(expected_part0);
-                parser_inst_part1.write(expected_part1);
-                axi_fetch_part0.write(part0);
-                axi_fetch_part1.write(part1);
-
-                std::cout << "[FETCHER] Instruction " << i << " at offset " << std::hex << (dram_instruction_offset - 16) << std::dec << "\n";
-                std::cout << "          Expected from Parser: part0=0x" << std::hex << expected_part0 << " part1=0x" << expected_part1 << "\n";
-                std::cout << "          Fetched from Memory : part0=0x" << std::hex << part0 << " part1=0x" << part1 << std::dec << "\n";
-
-                if (part0 == expected_part0 && part1 == expected_part1) {
-                    std::cout << "          >>> VALIDATION SUCCESS: Hardware fetched exactly what the parser wrote to memory! <<<\n";
-                } else {
-                    std::cout << "          >>> VALIDATION FAILED: Mismatch! <<<\n";
-                }
-
-                // Push the physically fetched instruction bits to the queue
-                this->instructions.push({type, part0, part1});
             }
-            
-            current_layer++;
-            load.notify(1, SC_NS);
-        }
+            break;
     }
 }
 

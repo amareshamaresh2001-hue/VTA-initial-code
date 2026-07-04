@@ -1,5 +1,12 @@
 {
-    "model_name": "test_all_instructions",
+    "model_name": "resnet_18_layers/layer_0",
+    "instruction_base_addr": 400000000,
+    "memory_latency": 1,
+    "architecture": {
+        "BATCH": 1,
+        "BLOCK_IN": 16,
+        "BLOCK_OUT": 16
+    },
     "en_ddr_lock": true,
     "en_cache": false,
     "en_prefetch": false,

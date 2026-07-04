@@ -11,58 +11,6 @@
 #include "queue.h"
 
 
-// struct Inst {
-//     uint32_t  id;
-//     InstrType type;
-//     bool pull_prev, pull_next, push_prev, push_next;
-//     int dep_count;
-
-//     Inst () {
-
-//     }
-    
-//     Inst(const sc_int<64>& data) { 
-//         this->id = data.range(63, 32).to_uint();
-
-//         this->type = static_cast<InstrType>(
-//             data.range(5, 4).to_uint()
-//         );
-
-//         this->pull_prev = data[3];
-//         this->pull_next = data[2];
-//         this->push_prev = data[1];
-//         this->push_next = data[0];
-//     }
-
-//     Inst(int id, InstrType type, bool pull_prev, bool pull_next, bool push_prev, bool push_next) {
-//         this->id = id;
-//         this->type = type;
-//         this->pull_prev = pull_prev;
-//         this->pull_next = pull_next;
-//         this->push_prev = push_prev;
-//         this->push_next = push_next;
-//         this->dep_count = (pull_prev ? 1 : 0) + (pull_next ? 1 : 0);
-//     }
-
-//     sc_int<64> encode() {
-//         sc_int<64> data = 0;
-        
-//             // ID → bits [63:32]
-//         data.range(63, 32) = this->id;
-
-//         // Type → bits [5:4]
-//         data.range(5, 4) = static_cast<unsigned int>(this->type);
-
-//         // Flags
-//         data[3] = this->pull_prev;
-//         data[2] = this->pull_next;
-//         data[1] = this->push_prev;
-//         data[0] = this->push_next;
-
-//         return data;
-//     }
-
-// };
 
 
 class Fetcher : public sc_module
@@ -99,16 +47,16 @@ public:
     sc_in<bool>         ARESETN;
     sc_in<sc_uint<32>>  START_ADDR;
 
-    sc_out<sc_uint<32>> ARADDR;
-    sc_out<sc_uint<8>>  ARLEN;
-    sc_out<bool>        ARVALID;
-    sc_in<bool>         ARREADY;
+    sc_out<sc_uint<32>> ARADDR;// the address that we want the data from
+    sc_out<sc_uint<8>>  ARLEN;//how many 32bits we want
+    sc_out<bool>        ARVALID;// turn high to inform that we put an address on ARADDR
+    sc_in<bool>         ARREADY;//the pin fetcher listens to, arbitrer turns this high to say it received the data
 
-    sc_in<sc_uint<32>>  RDATA;
+    sc_in<sc_uint<32>>  RDATA;// pin where the 32bit data comes from memory
     sc_in<sc_uint<2>>   RRESP;
-    sc_in<bool>         RVALID;
-    sc_out<bool>        RREADY;
-    sc_in<bool>         RLAST;
+    sc_in<bool>         RVALID;//pin we listen to- memory turns this hihg when RDATA has a valid data
+    sc_out<bool>        RREADY;//ready to accept data
+    sc_in<bool>         RLAST;// inform that its the last data
 
     // --- Validation Signals for VCD Tracing ---
     sc_signal<sc_uint<64>> parser_inst_part0;
@@ -116,9 +64,13 @@ public:
     sc_signal<sc_uint<64>> axi_fetch_part0;
     sc_signal<sc_uint<64>> axi_fetch_part1;
 
-    Fetcher(
-        sc_core::sc_module_name nm,
-        const std::vector<std::string>& keys,
+    sc_signal<uint64_t> trace_expected_part0;
+    sc_signal<uint64_t> trace_expected_part1;
+    sc_signal<uint64_t> trace_fetched_part0;
+    sc_signal<uint64_t> trace_fetched_part1;
+
+    Fetcher(sc_module_name n,
+            const std::vector<std::string>& layers,
         const std::map<std::string, std::vector<std::tuple<InstrType, sc_int<64>, sc_int<64>>>>& encoded_splited_instructions);
 
     ~Fetcher() {}
@@ -166,7 +118,17 @@ protected:
 
     void load_instruction();
     void send_instruction();
-    void axi_read_thread();
+    enum fetch_axi_state { f_idle, f_addr, f_data };
+    sc_signal<fetch_axi_state, SC_MANY_WRITERS> axi_state;
+
+    uint32_t f_axi_dram_offset;
+    uint32_t f_axi_chunk_count;
+    uint32_t f_axi_inst_idx;
+    uint32_t f_axi_num_inst;
+    uint64_t f_axi_part0;
+    uint64_t f_axi_part1;
+
+    void process_axi_read_fsm();
 
     void activate_load_queue_vld_handler();
     void activate_load_queue_end_handler();
