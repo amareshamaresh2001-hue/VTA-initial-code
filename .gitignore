@@ -28,7 +28,28 @@ build.ninja
 baseline.txt
 current.txt
 
+# Simulation debug output files
+out.txt
+out_debug.txt
+sim_debug.txt
+trace.txt
+simulation_output_test_all.txt
+vcd_full.txt
+vcd_out.txt
+
+# VCD waveform dumps (can be large — regenerate with ./build/my_systemc.exe)
+*.vcd
+
+# Large binary data blobs (regenerate from source)
+data/models/dummy_data.bin
+
+# Scratch / one-off analysis scripts (kept locally, not part of the project)
+find_deadlock.py
+vcd_analyzer.py
+downloaded_axi4_full_slave.h
+
 # Local tooling config (not project code)
 /.claude/
 
 # Note: .vscode/ is intentionally tracked — it carries the build & run setup.
+# Note: analyze_vcd.py IS tracked — it is the official waveform analysis tool.
