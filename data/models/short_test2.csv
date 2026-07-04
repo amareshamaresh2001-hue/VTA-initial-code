@@ -1,0 +1,10 @@
+layer_0,0,NOP-STORE-STAGE,STORE,0,0,1,0,0,0,1,0,pc=0 NOP-STORE-STAGE,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+layer_0,1,NOP-STORE-STAGE,STORE,0,0,1,0,0,0,2,0,pc=1 NOP-STORE-STAGE,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+layer_0,2,LOAD UOP,COMPUTE,0,1,0,0,0,0,1,0,pc=2 LOAD UOP,,,,,,,,,0x19880000,0x0000,MEMORY READ,,,,,,,1,8,8,0,0,0,0,,,,,,,,,,,
+layer_0,3,GEMM,COMPUTE,0,0,1,0,0,1,1,0,pc=3 GEMM,,,,,,,,,,,,,,,,,,,,,,,,,1,0,8,56,0,0,1,2,0,0,448
+layer_0,4,LOAD UOP,COMPUTE,0,1,0,0,0,1,0,0,pc=4 LOAD UOP,,,,,,,,,0x19880008,0x0008,MEMORY READ,,,,,,,1,8,8,0,0,0,0,,,,,,,,,,,
+layer_0,5,GEMM,COMPUTE,0,0,1,0,0,2,0,0,pc=5 GEMM,,,,,,,,,,,,,,,,,,,,,,,,,1,8,16,56,0,0,1,2,0,0,448
+layer_0,6,LOAD INP,LOAD,0,1,0,0,0,1,0,0,pc=6 LOAD INP,,,,,,,,,0x06040000,0x0000,MEMORY READ,,,,,,,2,448,3136,0,0,0,0,,,,,,,,,,,
+layer_0,7,LOAD WGT,LOAD,0,0,0,1,1,1,0,0,pc=7 LOAD WGT,,,,,,,,,0x00348f60,0x0000,MEMORY READ,,,,,,,2,2,4,0,0,0,0,,,,,,,,,,,
+layer_0,8,LOAD INP,LOAD,0,1,0,0,1,0,0,0,pc=8 LOAD INP,,,,,,,,,0x06040000,0x0380,MEMORY READ,,,,,,,2,448,3136,0,0,0,0,,,,,,,,,,,
+layer_0,9,LOAD WGT,LOAD,0,0,0,1,2,0,0,0,pc=9 LOAD WGT,,,,,,,,,0x00348f68,0x0004,MEMORY READ,,,,,,,2,2,4,0,0,0,0,,,,,,,,,,,
