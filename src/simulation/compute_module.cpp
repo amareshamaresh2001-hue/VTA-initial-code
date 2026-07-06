@@ -140,7 +140,7 @@ void ComputeModule::check_dependencies() {
             this->pull_prev_rdy_state = true;
             activate_pull_prev_rdy.notify(1, SC_NS);
         } else {
-            std::cout << "[COMPUTE] WAITING for PREV dependency (l2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
+            // std::cout << "[COMPUTE] WAITING for PREV dependency (l2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_prev = true;
         }
     }
@@ -149,7 +149,7 @@ void ComputeModule::check_dependencies() {
             this->pull_next_rdy_state = true;
             activate_pull_next_rdy.notify(1, SC_NS);
         } else {
-            std::cout << "[COMPUTE] WAITING for NEXT dependency (s2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
+            // std::cout << "[COMPUTE] WAITING for NEXT dependency (s2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_next = true;
         }
     } 
@@ -158,14 +158,14 @@ void ComputeModule::check_dependencies() {
             this->pull_prev_rdy_state = true;
             activate_pull_prev_rdy.notify(1, SC_NS);
         } else {
-            std::cout << "[COMPUTE] WAITING for PREV dependency (l2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
+            // std::cout << "[COMPUTE] WAITING for PREV dependency (l2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_prev = true;
         }
         if (this->pull_next_vld.read()) {
             this->pull_next_rdy_state = true;
             activate_pull_next_rdy.notify(1, SC_NS);
         } else {
-            std::cout << "[COMPUTE] WAITING for NEXT dependency (s2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
+            // std::cout << "[COMPUTE] WAITING for NEXT dependency (s2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_next = true;
         }
     } else {
@@ -298,12 +298,13 @@ void ComputeModule::dependencies_received() {
                         // Add the computed dot product to the existing accumulator value.
                         accum += tmp;
                         
-                        // Write the result back to the accumulator SRAM.
-                        // If 'reset_out' is true, we discard the old accumulator value and start fresh.
+                        // Write back result to accumulator SRAM.
+                        // Mirrors vta.cc: if reset_out is set, clear the acc AFTER the computation
+                        // (so the next tile starts fresh). The output buffer always gets the correct result.
                         acc_mem[dst_idx][oc] = current->get_reset_out() ? 0 : accum;
                         
-                        // Re-quantize the 32-bit accumulator value down to an 8-bit output by keeping only the lowest 8 bits (& 0xFF).
-                        // Write this 8-bit result to the output SRAM (which the Store module will later send to DRAM).
+                        // ALWAYS write the computed result to the output SRAM.
+                        // (Mirrors vta.cc line 306: o_tensor is written unconditionally from 'accum'.)
                         out_mem[dst_idx][oc] = (int8_t)(accum & 0xFF);
                     }
                 }
@@ -399,7 +400,7 @@ void ComputeModule::dependencies_received() {
     // After all computation is complete (or instantly for NOP), we notify the SystemC scheduler 
     // that this module has finished its work and consumed simulated time.
     // The latency() function calculates how many nanoseconds this operation took based on the hardware model.
-    std::cout << "[COMPUTE] Finished instruction: " << name << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
+    // std::cout << "[COMPUTE] Finished instruction: " << name << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
     finish.notify(latency());
 }
 
@@ -408,7 +409,7 @@ void ComputeModule::finalize_instruction() {
     
     if (this->current->get_name() =="FINISH") {
         std::cout << sc_time_stamp() << "\t\t" << "---------------------------- FINISH LAYER " << ComputeModule::current_layer++ << " ----------------------------" << std::endl;
-        sc_stop(); // Stop the simulation exactly when the layer completes
+        // sc_stop(); // Removed so ARM can trigger Fetcher for the next layer
         
         if (result_data != nullptr)
             delete result_data;

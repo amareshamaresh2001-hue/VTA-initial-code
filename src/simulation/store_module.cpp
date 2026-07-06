@@ -69,7 +69,7 @@ void StoreModule::check_dependencies() {
             this->pull_prev_rdy_state = true;
             activate_pull_prev_rdy.notify(1, SC_NS);
         } else {
-            std::cout << "[STORE] WAITING for PREV dependency (c2s) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
+            // std::cout << "[STORE] WAITING for PREV dependency (c2s) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_prev = true;
         }
     } else {
@@ -115,7 +115,7 @@ void StoreModule::dependencies_received() {
         return; // Let FSM take over
     }
 
-    std::cout << "[STORE] Finished instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
+    // std::cout << "[STORE] Finished instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
     finish.notify(latency());
 }
 
@@ -136,7 +136,7 @@ void StoreModule::push_dependencies() {
         this->push_prev_vld_state = true;
         activate_push_prev_vld.notify(1, SC_NS);
     } else {
-        std::cout << sc_time_stamp() << " FINISH STORE ID=" << current->get_pc() << " (AXI Phase 2)" << std::endl;
+        // std::cout << sc_time_stamp() << " FINISH STORE ID=" << current->get_pc() << " (AXI Phase 2)" << std::endl;
         if (result_data != nullptr)
             delete result_data;
         if (prev_data != nullptr)
@@ -287,23 +287,19 @@ void StoreModule::process_axi_write_fsm() {
                 WVALID.write(1);
                 
                 bool is_last = (s_axi_chunk_count == 3);
-                if (is_last) {
-                    WLAST.write(1);
-                } else {
-                    WLAST.write(0);
-                }
 
                 if (WREADY.read() == 1 && WVALID.read() == 1) {
                     if (is_last) {
-                        if (WLAST.read() == 1) {
-                            WVALID.write(0);
-                            WLAST.write(0);
-                            s_axi_dram_offset += 4;
-                            axi_state.write(s_out_resp);
-                        }
+                        WVALID.write(0);
+                        WLAST.write(0);
+                        s_axi_dram_offset += 4;
+                        axi_state.write(s_out_resp);
                     } else {
                         s_axi_chunk_count++;
                         s_axi_dram_offset += 4;
+                        if (s_axi_chunk_count == 3) {
+                            WLAST.write(1);
+                        }
                     }
                 }
             }

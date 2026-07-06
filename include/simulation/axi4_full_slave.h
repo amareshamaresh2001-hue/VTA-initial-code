@@ -19,7 +19,7 @@ SC_MODULE(axi4_full_slave) {
     sc_in<sc_uint<32>> ARADDR; sc_in<bool> ARVALID; sc_out<bool> ARREADY; sc_in<sc_uint<8>> ARLEN;
     sc_out<sc_uint<32>> RDATA; sc_out<sc_uint<2>> RRESP; sc_out<bool> RVALID; sc_in<bool> RREADY; sc_out<bool> RLAST;
 
-    // --- 1D MEMORY ARCHITECTURE (400MB) ---
+    // --- 1D MEMORY ARCHITECTURE (2GB) ---
     std::vector<uint8_t> memory_array; 
     
     
@@ -54,7 +54,7 @@ SC_MODULE(axi4_full_slave) {
                 if (WVALID.read() == 1) {
                     sc_uint<32> data = WDATA.read(); 
                     
-                    if (current_w_addr + 3 < 429916160) {
+                    if (current_w_addr + 3 < 2147483648ULL) {
                         memory_array[current_w_addr + 0] = data.range(7, 0); 
                         memory_array[current_w_addr + 1] = data.range(15, 8);   
                         memory_array[current_w_addr + 2] = data.range(23, 16); 
@@ -94,7 +94,7 @@ SC_MODULE(axi4_full_slave) {
                 ARREADY.write(0); 
                 sc_uint<32> mem_data = 0;
                 
-                if (current_r_addr + 3 < 429916160) {
+                if (current_r_addr + 3 < 2147483648ULL) {
                     mem_data = (memory_array[current_r_addr + 3] << 24) | 
                                (memory_array[current_r_addr + 2] << 16) | 
                                (memory_array[current_r_addr + 1] << 8)  | 
@@ -119,10 +119,13 @@ SC_MODULE(axi4_full_slave) {
     }
 
     SC_CTOR(axi4_full_slave) { 
-        memory_array.resize(429916160);
-        // Power-On SRAM Randomization 
-        for (int i = 0; i < 429916160; i++) {
-            memory_array[i] = rand() % 256;
+        memory_array.resize(2147483648ULL);
+        // Power-On SRAM Randomization using a fast LCG (Linear Congruential Generator)
+        // to avoid the huge 40-second overhead of calling standard rand() 2.1 billion times.
+        uint32_t seed = 0x12345678;
+        for (size_t i = 0; i < 2147483648ULL; i++) {
+            seed = seed * 1103515245 + 12345;
+            memory_array[i] = (seed >> 16) & 0xFF;
         }
 
         SC_METHOD(process_write_fsm); sensitive << ACLK.pos() << ARESETN.neg(); 

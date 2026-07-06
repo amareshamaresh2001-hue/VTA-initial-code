@@ -88,6 +88,7 @@ void Fetcher::in_trig_handler() {
 
 void Fetcher::load_layer_instructions() {
     if (current_layer == layers.size()) {
+        sc_stop(); // Dynamically stop the simulation when ALL layers are finished!
         return;
     } 
     do_fetch_layer = true;
