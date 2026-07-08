@@ -176,6 +176,10 @@ void Fetcher::process_axi_read_fsm() {
                     // waiting for the whole layer to finish fetching (matches the
                     // skeleton's intent: instructions start moving as soon as they
                     // are available, not only once the entire batch is ready).
+                    // Safe to call unconditionally even while a previous dispatch
+                    // is still in flight -- load_instruction() itself guards on
+                    // dispatch_busy and won't touch the shared instruction-part
+                    // buffer until that previous dispatch has fully drained it.
                     load.notify(1, SC_NS);
 
                     f_axi_inst_idx++;
@@ -192,7 +196,13 @@ void Fetcher::process_axi_read_fsm() {
 }
 
 void Fetcher::load_instruction() {
+    // Do not touch current_instruction_part/current_instruction_type while
+    // a previous instruction's dispatch is still draining them -- see
+    // dispatch_busy's declaration in fetcher.h for why this is required
+    // now that load.notify() can fire from two independent sources.
+    if (dispatch_busy) return;
     if (instructions.size() > 0) {
+        dispatch_busy = true;
         const auto current = instructions.front();
         instructions.pop();
 
@@ -238,7 +248,8 @@ void Fetcher::activate_load_queue_end_handler() {
         activate_load_queue_end.notify(1, SC_NS);
         this->load_queue_vld_state = false;
         activate_load_queue_vld.notify(SC_ZERO_TIME);
-        
+
+        dispatch_busy = false;
         load.notify(1, SC_NS);
     }
 }
@@ -256,6 +267,7 @@ void Fetcher::activate_compute_queue_end_handler() {
         this->compute_queue_vld_state = false;
         activate_compute_queue_vld.notify(SC_ZERO_TIME);
 
+        dispatch_busy = false;
         load.notify(1, SC_NS);
     }
 }
@@ -273,6 +285,7 @@ void Fetcher::activate_store_queue_end_handler() {
         this->store_queue_vld_state = false;
         activate_store_queue_vld.notify(SC_ZERO_TIME);
 
+        dispatch_busy = false;
         load.notify(1, SC_NS);
     }
 }

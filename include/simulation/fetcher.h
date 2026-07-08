@@ -89,6 +89,19 @@ protected:
 
     bool do_fetch_layer = false;
 
+    // Guards the shared current_instruction_part/current_instruction_type
+    // buffer: true from the moment load_instruction() pops an instruction
+    // until its dispatch to the target queue fully completes (the
+    // activate_*_queue_end_handler() that used to be the only trigger for
+    // load.notify()). Without this, firing load.notify() from the AXI
+    // fetch side (see process_axi_read_fsm's f_data state) as well as from
+    // dispatch-completion can pop a NEW instruction into this buffer while
+    // the PREVIOUS one's dispatch is still draining it -- which happens
+    // whenever a target instruction queue is at its 128-entry capacity and
+    // backpressures a dispatch mid-flight. Corrupts the shared buffer and
+    // crashes. See AGENT_CONTEXT.md Fix 7 for the full incident writeup.
+    bool dispatch_busy = false;
+
     bool load_queue_vld_state = false;
     bool load_queue_end_state = false;
     bool compute_queue_vld_state = false;
