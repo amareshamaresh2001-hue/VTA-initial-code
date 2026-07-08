@@ -63,7 +63,6 @@ void Queue::out_rdy_handler() {
 
 // write signals
 void Queue::activate_in_rdy_handler() {
-    // std::cout << sc_time_stamp() << " " << this->name() << " IN RDY=" << this->in_rdy_state << std::endl;
     this->in_rdy.write(this->in_rdy_state);
     if (this->in_rdy_state) {
         read_in_data.notify(1, SC_NS);
@@ -71,12 +70,10 @@ void Queue::activate_in_rdy_handler() {
 }
 
 void Queue::activate_out_vld_handler() {
-    // std::cout << sc_time_stamp() << " " << this->name() << " OUT VLD=" << this->out_vld_state << std::endl;
     this->out_vld.write(this->out_vld_state);
 }
 
 void Queue::activate_out_end_handler() {
-    // std::cout << sc_time_stamp() << " " << this->name() << " OUT VLD=" << this->out_vld_state << std::endl;
     this->out_end.write(this->out_end_state);
 
     if (this->out_end_state) {
@@ -96,10 +93,6 @@ void Queue::activate_out_end_handler() {
 
 // read & write data
 void Queue::write_out_data_handler() {
-    if(std::string(this->name()) == "vta.Compute_Instructions") {
-        std::cout<<"";
-    }
-    // std::cout << sc_time_stamp() << " " << this->name() << " SEND DATA " << this->data.front() << std::endl;
     if (instruction_queue) {
         this->out_data.write(this->data.front());
         out_instruction_parts_count++;
@@ -136,9 +129,6 @@ void Queue::write_out_data_handler() {
 }
 
 void Queue::read_in_data_handler() {
-    if(std::string(this->name()) == "vta.Compute_Instructions") {
-        std::cout<<"";
-    }
 
     if(!in_vld.read()) {
         return;

@@ -81,7 +81,7 @@ void Module::fetch_instruction() {
 }
 
 
-// fetch instruction 
+// fetch instruction
 void Module::i_queue_vld_handler() {
     if (!current) {
         i_queue_rdy_state = true;
