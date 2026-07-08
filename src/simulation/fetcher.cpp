@@ -172,6 +172,11 @@ void Fetcher::process_axi_read_fsm() {
 
                     // Push the physically fetched instruction bits to the queue
                     this->instructions.push({type, f_axi_part0, f_axi_part1});
+                    // Dispatch this instruction as soon as it is fetched, instead of
+                    // waiting for the whole layer to finish fetching (matches the
+                    // skeleton's intent: instructions start moving as soon as they
+                    // are available, not only once the entire batch is ready).
+                    load.notify(1, SC_NS);
 
                     f_axi_inst_idx++;
                     if (f_axi_inst_idx < f_axi_num_inst) {
@@ -179,7 +184,6 @@ void Fetcher::process_axi_read_fsm() {
                     } else {
                         axi_state.write(f_idle);
                         current_layer++;
-                        load.notify(1, SC_NS);
                     }
                 }
             }
