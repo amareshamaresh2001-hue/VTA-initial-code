@@ -1,0 +1,2 @@
+layer_0,0,LOAD ACC,COMPUTE,0,0,0,0,0,0,0,0,pc=0 LOAD ACC (synthetic padding + stride test),,,,,,,,,0x00000000,0x0000,MEMORY READ,,,,,,,3,2,4,1,1,1,1,,,,,,,,,,,,,,,,,
+layer_0,1,FINISH,COMPUTE,,,,,0,0,0,0,pc=1 FINISH,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,

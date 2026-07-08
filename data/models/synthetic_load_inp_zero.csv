@@ -1,0 +1,2 @@
+layer_0,0,LOAD INP,LOAD,0,0,0,1,0,0,0,0,pc=0 LOAD INP (synthetic zero x_size with padding),,,,,,,,,0x00000000,0x0000,MEMORY READ,,,,,,,3,0,1,2,2,2,2,,,,,,,,,,,,,,,,,
+layer_0,1,FINISH,COMPUTE,1,0,0,0,0,0,0,0,pc=1 FINISH,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
