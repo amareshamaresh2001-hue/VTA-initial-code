@@ -116,6 +116,9 @@ private:
 
     uint32_t s_axi_base_addr;
 
+    bool aw_pending = false;
+    bool w_pending  = false;
+
     void process_axi_write_fsm();
 
     sc_int<64> *prev_data = nullptr;

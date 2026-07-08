@@ -218,15 +218,33 @@ void ComputeModule::dependencies_received() {
         uint32_t dram_base = dram_str.empty() ? 0 : std::stoul(dram_str, nullptr, 16);
         uint32_t x_size    = current->get_x_size();
         uint32_t y_size    = current->get_y_size() == 0 ? 1 : current->get_y_size();
+        uint32_t y0_pad    = current->get_y0_pad();
+        uint32_t y1_pad    = current->get_y1_pad();
+        uint32_t x0_pad    = current->get_x0_pad();
+        uint32_t x1_pad    = current->get_x1_pad();
 
         if (x_size == 0) { finish.notify(latency()); return; }
 
+        c_axi_x_width = x0_pad + x_size + x1_pad;
+        uint32_t sram_idx = sram_base;
+
+        // TOP PADDING: zero-fill y0_pad * x_width rows synchronously (mirrors load_module.cpp LOAD INP)
+        for (uint32_t i = 0; i < y0_pad * c_axi_x_width; i++) {
+            if (sram_idx < ACC_BUFF_DEPTH)
+                for (int c = 0; c < VTA_BLOCK_OUT; c++) acc_mem[sram_idx][c] = 0;
+            sram_idx++;
+        }
+
         c_axi_base_addr = START_ADDR.read();
-        c_axi_sram_idx = sram_base;
+        c_axi_sram_idx = sram_idx;
         c_axi_addr_offset = dram_base * VTA_BLOCK_OUT * 4;
         c_axi_y = 0;
         c_axi_x = 0;
         c_axi_burst_idx = 0;
+        c_axi_x0_pad = x0_pad;
+        c_axi_x1_pad = x1_pad;
+        c_axi_y1_pad = y1_pad;
+        c_axi_left_pad_done = false;
 
         axi_state.write(c_acc_addr);
         return;
@@ -308,7 +326,7 @@ void ComputeModule::dependencies_received() {
                         out_mem[dst_idx][oc] = (int8_t)(accum & 0xFF);
                     }
                 }
-                
+
                 // Update the inner loop offsets by adding the inner step factors defined in the instruction.
                 dst_offset_in += current->get_gemm_inner_loop_acc();
                 src_offset_in += current->get_gemm_inner_loop_inp();
@@ -385,15 +403,17 @@ void ComputeModule::dependencies_received() {
                         out_mem[dst_idx][oc] = (int8_t)(result & 0xFF);
                     }
                 }
-                // Update the inner loop offsets. 
-                // NOTE: We use the `get_gemm_*` getters here as a workaround for a known CSV decoder bug 
-                // where the ALU iteration counts were incorrectly saved in the GEMM fields.
-                dst_offset_in += current->get_gemm_inner_loop_acc();
-                src_offset_in += current->get_gemm_inner_loop_inp();
+                // Update the inner loop offsets.
+                // NOTE: get_gemm_outer/inner_loop_iter() above are a deliberate workaround for a
+                // known CSV decoder bug where ALU iteration counts were incorrectly saved in the
+                // GEMM fields. The offset-increment fields below have no such aliasing issue and
+                // are correctly decoded into the alu_* members, so use the alu_* getters directly.
+                dst_offset_in += current->get_alu_inner_loop_dst();
+                src_offset_in += current->get_alu_inner_loop_src();
             }
             // Update the outer loop offsets.
-            dst_offset_out += current->get_gemm_outer_loop_acc();
-            src_offset_out += current->get_gemm_outer_loop_inp();
+            dst_offset_out += current->get_alu_outer_loop_dst();
+            src_offset_out += current->get_alu_outer_loop_src();
         }
     }
 
@@ -685,6 +705,16 @@ void ComputeModule::process_axi_read_fsm() {
 
         case c_acc_addr:
             if (c_axi_y < (current->get_y_size() == 0 ? 1 : current->get_y_size()) && c_axi_sram_idx < ACC_BUFF_DEPTH) {
+                if (c_axi_x == 0 && c_axi_burst_idx == 0 && !c_axi_left_pad_done) {
+                    // LEFT PADDING synchronously (mirrors load_module.cpp l_inp_addr).
+                    // Guarded so repeated FSM evaluations while waiting for ARREADY don't re-run it.
+                    for (uint32_t i = 0; i < c_axi_x0_pad; i++) {
+                        if (c_axi_sram_idx < ACC_BUFF_DEPTH)
+                            for (int c = 0; c < VTA_BLOCK_OUT; c++) acc_mem[c_axi_sram_idx][c] = 0;
+                        c_axi_sram_idx++;
+                    }
+                    c_axi_left_pad_done = true;
+                }
                 if (c_axi_x < current->get_x_size() && c_axi_sram_idx < ACC_BUFF_DEPTH) {
                     if (c_axi_burst_idx < VTA_BLOCK_OUT / 4) {
                         ARADDR.write(c_axi_base_addr + c_axi_addr_offset);
@@ -705,13 +735,26 @@ void ComputeModule::process_axi_read_fsm() {
                         // re-eval loop conditions
                     }
                 } else {
-                    // Finished x loop
-                    c_axi_sram_idx += current->get_stride();
+                    // RIGHT PADDING synchronously
+                    for (uint32_t i = 0; i < c_axi_x1_pad; i++) {
+                        if (c_axi_sram_idx < ACC_BUFF_DEPTH)
+                            for (int c = 0; c < VTA_BLOCK_OUT; c++) acc_mem[c_axi_sram_idx][c] = 0;
+                        c_axi_sram_idx++;
+                    }
+                    // DRAM address advances by stride; SRAM index must NOT (matches vta.cc load_pad_2d).
+                    c_axi_addr_offset += (current->get_stride() - current->get_x_size()) * VTA_BLOCK_OUT * 4;
                     c_axi_y++;
                     c_axi_x = 0;
                     c_axi_burst_idx = 0;
+                    c_axi_left_pad_done = false; // next row needs its own left padding
                 }
             } else {
+                // BOTTOM PADDING synchronously
+                for (uint32_t i = 0; i < c_axi_y1_pad * c_axi_x_width; i++) {
+                    if (c_axi_sram_idx < ACC_BUFF_DEPTH)
+                        for (int c = 0; c < VTA_BLOCK_OUT; c++) acc_mem[c_axi_sram_idx][c] = 0;
+                    c_axi_sram_idx++;
+                }
                 // Completely finished
                 axi_state.write(c_idle);
                 finish.notify(latency());

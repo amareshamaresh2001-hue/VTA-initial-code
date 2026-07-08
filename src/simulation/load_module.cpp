@@ -12,8 +12,8 @@ constexpr int VTA_BLOCK_OUT = 16;
 constexpr int INP_BUFF_DEPTH = (1 << vta_config::UOP_SRC_WIDTH); // 2048
 constexpr int WGT_BUFF_DEPTH = (1 << vta_config::UOP_WGT_WIDTH); // 1024
 
-extern int8_t inp_mem[INP_BUFF_DEPTH][VTA_BLOCK_IN];  
-extern int8_t wgt_mem[WGT_BUFF_DEPTH][VTA_BLOCK_OUT * VTA_BLOCK_IN]; 
+extern int8_t inp_mem[INP_BUFF_DEPTH][VTA_BLOCK_IN];
+extern int8_t wgt_mem[WGT_BUFF_DEPTH][VTA_BLOCK_OUT * VTA_BLOCK_IN];
 
 LoadModule::LoadModule(sc_module_name n) : Module(n) {
 
@@ -102,13 +102,11 @@ void LoadModule::dependencies_received() { //
             uint32_t x0_pad    = current->get_x0_pad();
             uint32_t x1_pad    = current->get_x1_pad();
 
-            if (x_size == 0 || y_size == 0) {
-                std::cout << sc_time_stamp() << " " << this->name() << " SKIPPED INSTRUCTION: " << name 
+            if (name == "LOAD WGT" && (x_size == 0 || y_size == 0)) {
+                std::cout << sc_time_stamp() << " " << this->name() << " SKIPPED INSTRUCTION: " << name
                           << " x_size=" << x_size << " y_size=" << y_size << " pc=" << current->get_pc() << std::endl;
                 finish.notify(latency());
                 return;
-            } else {
-                // Print removed for speed
             }
 
             // sram_idx: linear SRAM tile counter, matches HLS ref: sram_idx = insn.sram_base
@@ -135,6 +133,7 @@ void LoadModule::dependencies_received() { //
                 l_axi_x1_pad = x1_pad;
                 l_axi_y1_pad = y1_pad;
                 l_axi_base_addr = START_ADDR.read();
+                l_axi_left_pad_done = false;
 
                 axi_state.write(l_inp_addr);
                 return; // Let FSM take over
@@ -289,13 +288,15 @@ void LoadModule::process_axi_read_fsm() {
 
         case l_inp_addr:
             if (l_axi_y < l_axi_y_size) {
-                if (l_axi_x == 0) {
-                    // LEFT PADDING synchronously
+                if (l_axi_x == 0 && !l_axi_left_pad_done) {
+                    // LEFT PADDING synchronously (fires exactly once per row: guarded so
+                    // repeated FSM evaluations while waiting for ARREADY don't re-run it)
                     for (uint32_t i = 0; i < l_axi_x0_pad; i++) {
                         if (l_axi_sram_idx < INP_BUFF_DEPTH)
                             for (int c = 0; c < VTA_BLOCK_IN; c++) inp_mem[l_axi_sram_idx][c] = 0;
                         l_axi_sram_idx++;
                     }
+                    l_axi_left_pad_done = true;
                 }
 
                 if (l_axi_x < l_axi_x_size) {
@@ -319,6 +320,7 @@ void LoadModule::process_axi_read_fsm() {
                     l_axi_dram_offset += (l_axi_stride - l_axi_x_size) * VTA_BLOCK_IN; // jump to next row
                     l_axi_x = 0;
                     l_axi_y++;
+                    l_axi_left_pad_done = false; // next row needs its own left padding
                 }
             } else {
                 // BOTTOM PADDING synchronously

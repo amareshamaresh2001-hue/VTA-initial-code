@@ -98,6 +98,12 @@ private:
     uint32_t c_axi_elem_base;
     uint32_t c_axi_base_addr;
 
+    uint32_t c_axi_x0_pad;
+    uint32_t c_axi_x1_pad;
+    uint32_t c_axi_y1_pad;
+    uint32_t c_axi_x_width;
+    bool c_axi_left_pad_done;
+
     void process_axi_read_fsm();
     sc_event activate_push_prev_vld;
     sc_event activate_push_prev_end;

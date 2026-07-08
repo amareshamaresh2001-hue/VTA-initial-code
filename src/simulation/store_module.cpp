@@ -97,7 +97,7 @@ void StoreModule::dependencies_received() {
         uint32_t x_size    = current->get_x_size();
         uint32_t stride    = current->get_stride();
 
-        if (x_size == 0 || y_size == 0) {
+        if (y_size == 0) {
             finish.notify(latency());
             return;
         }
@@ -177,12 +177,10 @@ void StoreModule::dependencies_pushed() {
 
 // write signals
 void StoreModule::activate_push_prev_vld_handler() {
-    // std::cout << sc_time_stamp() << " STORE 2 PUSH_PREV_QUEUE VLD=" << this->push_prev_vld_state << std::endl;
     this->push_prev_vld.write(this->push_prev_vld_state);
 }
 
 void StoreModule::activate_push_prev_end_handler() {
-    // std::cout << sc_time_stamp() << " STORE 2 PUSH_PREV_QUEUE VLD=" << this->push_prev_vld_state << std::endl;
     this->push_prev_end.write(this->push_prev_end_state);
 
     if (push_prev_end_state) {
@@ -231,7 +229,7 @@ void StoreModule::push_prev_rdy_handler() {
 
 void StoreModule::write_push_prev_data_handler() {
     this->push_prev_data.write(this->current->get_pc());
-    
+
     this->push_prev_end_state = true;
     this->activate_push_prev_end.notify(1, SC_NS);
 }
@@ -244,6 +242,8 @@ void StoreModule::process_axi_write_fsm() {
         WVALID.write(0);
         WLAST.write(0);
         BREADY.write(0);
+        aw_pending = false;
+        w_pending  = false;
         return;
     }
 
@@ -258,11 +258,14 @@ void StoreModule::process_axi_write_fsm() {
                     AWLEN.write(3); // 4-beat burst = 16 bytes = 1 tile
                     AWVALID.write(1);
 
-                    if (AWREADY.read() == 1 && AWVALID.read() == 1) {
+                    if (AWREADY.read() == 1 && aw_pending) {
                         AWVALID.write(0);
+                        aw_pending = false;
                         s_axi_chunk_count = 0;
                         BREADY.write(1);
                         axi_state.write(s_out_data);
+                    } else {
+                        aw_pending = true;
                     }
                 } else {
                     s_axi_dram_offset += (s_axi_stride - s_axi_x_size) * VTA_BLOCK_OUT; // 16 bytes per tile
@@ -285,10 +288,11 @@ void StoreModule::process_axi_write_fsm() {
 
                 WDATA.write(word);
                 WVALID.write(1);
-                
+
                 bool is_last = (s_axi_chunk_count == 3);
 
-                if (WREADY.read() == 1 && WVALID.read() == 1) {
+                if (WREADY.read() == 1 && w_pending) {
+                    w_pending = false;
                     if (is_last) {
                         WVALID.write(0);
                         WLAST.write(0);
@@ -301,6 +305,8 @@ void StoreModule::process_axi_write_fsm() {
                             WLAST.write(1);
                         }
                     }
+                } else {
+                    w_pending = true;
                 }
             }
             break;

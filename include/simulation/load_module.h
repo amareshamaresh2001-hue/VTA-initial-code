@@ -106,7 +106,8 @@ private:
     uint32_t l_axi_y0_pad;
     uint32_t l_axi_y1_pad;
     uint32_t l_axi_x_width;
-    
+    bool l_axi_left_pad_done;
+
     uint32_t l_axi_base_addr;
 
     void process_axi_read_fsm();
