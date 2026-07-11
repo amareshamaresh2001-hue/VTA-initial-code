@@ -83,7 +83,7 @@ private:
 
     sc_event send_signal;
 
-    // Phase 2: AXI SC_METHOD handlers for LOAD UOP and LOAD ACC
+    // AXI SC_METHOD handlers for LOAD UOP and LOAD ACC
     enum compute_axi_state { c_idle, c_uop_addr, c_uop_data, c_acc_addr, c_acc_data };
     sc_signal<compute_axi_state, SC_MANY_WRITERS> axi_state;
 

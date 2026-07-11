@@ -2,7 +2,7 @@
 #include "vta_config.h"
 
 // =========================================================================
-// --- STAGE 2: EXTERNAL SRAM ARRAYS ---
+// --- EXTERNAL SRAM ARRAYS ---
 // By declaring this 'extern', the Store module can access the results computed
 // by the Compute module and send them across the AXI bus back to main memory.
 // =========================================================================
@@ -14,7 +14,8 @@ extern int8_t out_mem[ACC_BUFF_DEPTH][VTA_BLOCK_OUT];
 
 StoreModule::StoreModule(sc_module_name n) : Module(n) {
 
-    // --- STAGE 2: REGISTER AXI    // Pure SC_METHOD design: no SC_THREAD, no wait(), no while loops.
+    // Registers the AXI write FSM and dependency-handshake handlers.
+    // Pure SC_METHOD design: no SC_THREAD, no wait(), no while loops.
     // All logic runs in event-driven SC_METHODs only.
 
     SC_METHOD(process_axi_write_fsm);
@@ -69,7 +70,6 @@ void StoreModule::check_dependencies() {
             this->pull_prev_rdy_state = true;
             activate_pull_prev_rdy.notify(1, SC_NS);
         } else {
-            // std::cout << "[STORE] WAITING for PREV dependency (c2s) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_prev = true;
         }
     } else {
@@ -84,10 +84,8 @@ void StoreModule::receive_dependencies() {
 }
 
 void StoreModule::dependencies_received() {
-    // std::cout << sc_time_stamp() << " START STORE ID=" << current->id << std::endl;
-    // std::cout << sc_time_stamp() << " " << this->name() << " START EXECUTING " << current->get_layer() << " " << current->get_pc() << std::endl;
     
-    // --- STAGE 2: AXI TRIGGER ---
+    // --- AXI TRIGGER ---
     if (current->get_name().find("STORE") != std::string::npos && current->get_name() != "NOP-STORE-STAGE") {
         std::string dram_str = current->get_dram();
         std::string sram_str = current->get_sram();
@@ -115,12 +113,11 @@ void StoreModule::dependencies_received() {
         return; // Let FSM take over
     }
 
-    // std::cout << "[STORE] Finished instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
     finish.notify(latency());
 }
 
 // =========================================================================
-// --- STAGE 2: AXI WRITE THREAD IMPLEMENTATION ---
+// --- AXI WRITE THREAD IMPLEMENTATION ---
 // This is the cycle-accurate hardware model for the Store module.
 // It uses 4-beat bursts to remain compatible with the teammate's Memory.
 // =========================================================================
@@ -136,7 +133,6 @@ void StoreModule::push_dependencies() {
         this->push_prev_vld_state = true;
         activate_push_prev_vld.notify(1, SC_NS);
     } else {
-        // std::cout << sc_time_stamp() << " FINISH STORE ID=" << current->get_pc() << " (AXI Phase 2)" << std::endl;
         if (result_data != nullptr)
             delete result_data;
         if (prev_data != nullptr)
@@ -154,7 +150,6 @@ void StoreModule::push_dependencies() {
 
 void StoreModule::dependencies_pushed() {
     if (!current->get_push_prev() || (current->get_push_prev() && this->did_push_prev)) {
-        // std::cout << sc_time_stamp() << " FINISH STORE ID=" << current->get_pc() << std::endl;
 
         if (result_data != nullptr)
             delete result_data;
@@ -193,7 +188,6 @@ void StoreModule::activate_push_prev_end_handler() {
 }
 
 void StoreModule::activate_pull_prev_rdy_handler() {
-    // std::cout << sc_time_stamp() << " STORE 2 PULL_PREV_QUEUE RDY=" << this->pull_prev_rdy_state << std::endl;
     this->pull_prev_rdy.write(this->pull_prev_rdy_state);
     if (this->pull_prev_rdy_state) {
         read_pull_prev_data.notify(1, SC_NS);
@@ -211,7 +205,6 @@ void StoreModule::pull_prev_vld_handler() {
 }
 
 void StoreModule::read_pull_prev_data_handler() {
-    // std::cout << sc_time_stamp() << " STORE RECEIVE DATA " << this->pull_prev_data.read() << std::endl;
     this->prev_data = new sc_int<64>(this->pull_prev_data.read());
 }
 
@@ -234,7 +227,7 @@ void StoreModule::write_push_prev_data_handler() {
     this->activate_push_prev_end.notify(1, SC_NS);
 }
 
-// Phase 2: process_axi_write_fsm
+// AXI write FSM handling STORE instructions.
 void StoreModule::process_axi_write_fsm() {
     if (!ARESETN.read()) {
         axi_state.write(s_idle);

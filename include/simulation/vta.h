@@ -8,7 +8,7 @@
 #include "store_module.h"
 #include "instruction.h"
 
-// --- STAGE 2: AXI HARDWARE IMPORTS ---
+// --- AXI HARDWARE IMPORTS ---
 #include "axi_interconnect.h"
 #include "axi4_full_slave.h"
 
@@ -35,7 +35,7 @@ public: // Unavoidable: main.cpp needs to trace these for the VCD file
     StoreModule *store;
 
     // =========================================================================
-    // --- STAGE 2: AXI HARDWARE COMPONENTS ---
+    // --- AXI HARDWARE COMPONENTS ---
     // These are the physical hardware blocks provided by the teammate.
     // =========================================================================
     axi_interconnect *arbiter;
@@ -101,7 +101,7 @@ public:
     sc_signal<bool> m3_AWLOCK, m3_ARLOCK;
     sc_signal<sc_uint<32>> sys_start_m3;  // Dynamic start address for Fetcher
 
-    void power_on_sequence(); // --- STAGE 2: Power-On Reset ---
+    void power_on_sequence(); // --- Power-On Reset ---
 
     Queue *l2c_queue;
     Queue *c2l_queue;

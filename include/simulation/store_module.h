@@ -23,7 +23,7 @@ public:
     sc_out<bool> push_prev_end;
     
     // =========================================================================
-    // --- STAGE 2: AXI HARDWARE INTEGRATION PORTS ---
+    // --- AXI HARDWARE INTEGRATION PORTS ---
     // The following ports allow this StoreModule to act as an AXI Master.
     // It will push completed neural network calculations back into main memory.
     // =========================================================================
@@ -95,12 +95,12 @@ public:
 private:
 
     // =========================================================================
-    // --- STAGE 2: AXI TO EVENT-DRIVEN BRIDGE ---
+    // --- AXI TO EVENT-DRIVEN BRIDGE ---
     // We cannot use wait() inside dependencies_received() because it is an SC_METHOD.
     // Therefore, we use this sc_event to wake up a separate SC_THREAD that handles AXI.
     // =========================================================================
 
-    // Phase 2: AXI SC_METHOD handlers for STORE OUT
+    // AXI SC_METHOD handlers for STORE OUT
     enum store_axi_state { s_idle, s_out_addr, s_out_data, s_out_resp };
     sc_signal<store_axi_state, SC_MANY_WRITERS> axi_state;
 

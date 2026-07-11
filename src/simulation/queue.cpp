@@ -134,7 +134,6 @@ void Queue::read_in_data_handler() {
         return;
     }
 
-    // std::cout << sc_time_stamp() << " " << this->name() << " RECEIVE DATA " << this->in_data.read() << std::endl;
     if (instruction_queue) {
         current_instruction_part.push_back(this->in_data.read());
         if (current_instruction_part.size() == 2) {

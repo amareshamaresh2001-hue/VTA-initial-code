@@ -23,8 +23,7 @@ VTA::VTA(
     // Turn off Reset (Active Low) so the hardware turns on immediately
     sys_reset.write(1);
 
-    // Provide default dynamic config values for now.
-    // In Stage 3, the Dispatcher would drive these.
+    // Static default values; a future dynamic dispatcher could drive these instead.
     sys_cfg_width.write(16);
     sys_cfg_stride.write(16);
     sys_start_m0.write(0x00000000);
@@ -294,7 +293,7 @@ VTA::VTA(
     store->pull_prev_end(c2s_store_end_sig);
 
     SC_METHOD(start); // <-- RESTORED: Must be an SC_METHOD so SystemC schedules it correctly
-    SC_THREAD(power_on_sequence); // --- STAGE 2: REGISTER POWER-ON THREAD ---
+    SC_THREAD(power_on_sequence); // --- REGISTER POWER-ON THREAD ---
 }
 
 void VTA::start() {
@@ -304,7 +303,7 @@ void VTA::start() {
 }
 
 // =========================================================================
-// --- STAGE 2: POWER-ON RESET SEQUENCE ---
+// --- POWER-ON RESET SEQUENCE ---
 // This thread handles the hardware boot-up. It pulls the Reset line LOW,
 // waits for the clock to stabilize, and then releases the Reset.
 // =========================================================================

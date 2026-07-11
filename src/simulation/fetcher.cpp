@@ -305,8 +305,6 @@ void Fetcher::store_queue_rdy_handler() {
 
 
 void Fetcher::write_load_data_handler() {
-    // std::cout << sc_time_stamp() << " " << this->name() << " SEND DATA " << current.encode() << std::endl;
-    // std::cout << sc_time_stamp() << " " << this->name() << " SEND Instruction " << current.get_layer() << " " << current.get_pc() << std::endl;
     // load_queue_data.write(std::get<0>(current.encode()));
 
     // load_queue_vld_state = false;
@@ -326,8 +324,6 @@ void Fetcher::write_load_data_handler() {
 }
 
 void Fetcher::write_compute_data_handler() {
-    // std::cout << sc_time_stamp() << " " << this->name() << " SEND DATA " << current.encode() << std::endl;
-    // std::cout << sc_time_stamp() << " " << this->name() << " SEND Instruction " << current.get_layer() << " " << current.get_pc() << std::endl;
     // compute_queue_data.write(std::get<0>(current.encode()));
 
     // compute_queue_vld_state = false;
@@ -347,8 +343,6 @@ void Fetcher::write_compute_data_handler() {
 }
 
 void Fetcher::write_store_data_handler() {
-    // std::cout << sc_time_stamp() << " " << this->name() << " SEND DATA " << current.encode() << std::endl;
-    // std::cout << sc_time_stamp() << " " << this->name() << " SEND Instruction " << current.get_layer() << " " << current.get_pc() << std::endl;
     // store_queue_data.write(std::get<0>(current.encode()));
 
     // store_queue_vld_state = false;

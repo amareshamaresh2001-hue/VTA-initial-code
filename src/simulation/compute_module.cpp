@@ -140,7 +140,6 @@ void ComputeModule::check_dependencies() {
             this->pull_prev_rdy_state = true;
             activate_pull_prev_rdy.notify(1, SC_NS);
         } else {
-            // std::cout << "[COMPUTE] WAITING for PREV dependency (l2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_prev = true;
         }
     }
@@ -149,7 +148,6 @@ void ComputeModule::check_dependencies() {
             this->pull_next_rdy_state = true;
             activate_pull_next_rdy.notify(1, SC_NS);
         } else {
-            // std::cout << "[COMPUTE] WAITING for NEXT dependency (s2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_next = true;
         }
     } 
@@ -158,14 +156,12 @@ void ComputeModule::check_dependencies() {
             this->pull_prev_rdy_state = true;
             activate_pull_prev_rdy.notify(1, SC_NS);
         } else {
-            // std::cout << "[COMPUTE] WAITING for PREV dependency (l2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_prev = true;
         }
         if (this->pull_next_vld.read()) {
             this->pull_next_rdy_state = true;
             activate_pull_next_rdy.notify(1, SC_NS);
         } else {
-            // std::cout << "[COMPUTE] WAITING for NEXT dependency (s2c) for instruction: " << current->get_name() << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
             this->is_waiting_next = true;
         }
     } else {
@@ -343,7 +339,8 @@ void ComputeModule::dependencies_received() {
         // This handles element-wise operations on the accumulator tiles.
         // It skips NOP (No Operation), which just passes time.
 
-        // Per Professor Bebawy's instruction, use_imm defaults to false and we ignore the immediate feature.
+        // use_imm intentionally defaults to false; the immediate-operand ALU path
+        // is out of scope for this implementation.
 
         // Similar to GEMM, these track the base index offsets for the two operand tiles.
         int dst_offset_out = 0, src_offset_out = 0;
@@ -420,7 +417,6 @@ void ComputeModule::dependencies_received() {
     // After all computation is complete (or instantly for NOP), we notify the SystemC scheduler 
     // that this module has finished its work and consumed simulated time.
     // The latency() function calculates how many nanoseconds this operation took based on the hardware model.
-    // std::cout << "[COMPUTE] Finished instruction: " << name << " (PC=" << current->get_pc() << ") at time " << sc_time_stamp() << std::endl;
     finish.notify(latency());
 }
 
@@ -470,7 +466,6 @@ void ComputeModule::push_dependencies() {
         this->push_next_vld_state = true;
         this->activate_push_next_vld.notify(1, SC_NS);
     } else {
-        // std::cout << sc_time_stamp() << " FINISH COMPUTE ID=" << current->get_pc() << std::endl;
         if (result_data != nullptr)
             delete result_data;
         if (prev_data != nullptr)
@@ -497,7 +492,6 @@ void ComputeModule::dependencies_pushed() {
         (!current->get_push_prev() && current->get_push_next() && this->did_push_next) ||
         (current->get_push_prev() && current->get_push_next() && this->did_push_prev && this->did_push_next)
     ) {
-        // std::cout << sc_time_stamp() << " FINISH COMPUTE ID=" << current->get_pc() << std::endl;
 
         if (result_data != nullptr)
             delete result_data;
@@ -536,12 +530,10 @@ void ComputeModule::send_signal_handler() {
 }
 
 void ComputeModule::activate_push_prev_vld_handler() {
-    // std::cout << sc_time_stamp() << " COMPUTE 2 PUSH_PREV_QUEUE VLD=" << this->push_prev_vld_state << std::endl;
     this->push_prev_vld.write(this->push_prev_vld_state);
 }
 
 void ComputeModule::activate_push_prev_end_handler() {
-    // std::cout << sc_time_stamp() << " COMPUTE 2 PUSH_PREV_QUEUE VLD=" << this->push_prev_vld_state << std::endl;
     this->push_prev_end.write(this->push_prev_end_state);
 
     if (push_prev_end_state) {
@@ -554,12 +546,10 @@ void ComputeModule::activate_push_prev_end_handler() {
 }
 
 void ComputeModule::activate_push_next_vld_handler() {
-    // std::cout << sc_time_stamp() << " COMPUTE 2 PUSH_NEXT_QUEUE VLD=" << this->push_next_vld_state << std::endl;
     this->push_next_vld.write(this->push_next_vld_state);
 }
 
 void ComputeModule::activate_push_next_end_handler() {
-    // std::cout << sc_time_stamp() << " COMPUTE 2 PUSH_NEXT_QUEUE VLD=" << this->push_next_vld_state << std::endl;
     this->push_next_end.write(this->push_next_end_state);
 
     if (this->push_next_end_state) {
@@ -572,7 +562,6 @@ void ComputeModule::activate_push_next_end_handler() {
 }
 
 void ComputeModule::activate_pull_prev_rdy_handler() {
-    // std::cout << sc_time_stamp() << " COMPUTE 2 PULL_PREV_QUEUE RDY=" << this->pull_prev_rdy_state << std::endl;
     this->pull_prev_rdy.write(this->pull_prev_rdy_state);
     if (this->pull_prev_rdy_state) {
         read_pull_prev_data.notify(1, SC_NS);
@@ -580,7 +569,6 @@ void ComputeModule::activate_pull_prev_rdy_handler() {
 }
 
 void ComputeModule::activate_pull_next_rdy_handler() {
-    // std::cout << sc_time_stamp() << " COMPUTE 2 PULL_NEXT_QUEUE RDY=" << this->pull_next_rdy_state << std::endl;
     this->pull_next_rdy.write(this->pull_next_rdy_state);
     if (this->pull_next_rdy_state) {
         read_pull_next_data.notify(1, SC_NS);
@@ -598,7 +586,6 @@ void ComputeModule::pull_prev_vld_handler() {
 }
 
 void ComputeModule::read_pull_prev_data_handler() {
-    // std::cout << sc_time_stamp() << " COMPUTE RECEIVE DATA FROM LOAD " << this->pull_prev_data.read() << std::endl;
     this->prev_data = new sc_int<64>(this->pull_prev_data.read());
 }
 
@@ -615,7 +602,6 @@ void ComputeModule::push_prev_rdy_handler() {
 }
 
 void ComputeModule::write_push_prev_data_handler() {
-    // std::cout << sc_time_stamp() << " COMPUTE SEND DATA TO LOAD " << this->current->id << std::endl;
     this->push_prev_data.write(this->current->get_pc());
 
     this->push_prev_end_state = true;
@@ -632,7 +618,6 @@ void ComputeModule::pull_next_vld_handler() {
 }
 
 void ComputeModule::read_pull_next_data_handler() {
-    // std::cout << sc_time_stamp() << " COMPUTE RECEIVE DATA FROM STORE " << this->pull_next_data.read() << std::endl;
     this->next_data = new sc_int<64>(this->pull_next_data.read());
 }
 
@@ -654,7 +639,7 @@ void ComputeModule::write_push_next_data_handler() {
     this->activate_push_next_end.notify(1, SC_NS);
 }
 
-// Phase 2: process_axi_read_fsm replaces axi_read_thread()
+// AXI read FSM handling LOAD UOP and LOAD ACC instructions.
 void ComputeModule::process_axi_read_fsm() {
     if (!ARESETN.read()) {
         axi_state.write(c_idle);

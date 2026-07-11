@@ -2,7 +2,7 @@
 #include "vta_config.h"
 
 // =========================================================================
-// --- STAGE 2: EXTERNAL SRAM ARRAYS ---
+// --- EXTERNAL SRAM ARRAYS ---
 // The following arrays are physically located in the Compute module.
 // By declaring them 'extern', the Load module can access them to store 
 // the neural network inputs and weights it fetches from the AXI memory.
@@ -171,7 +171,6 @@ void LoadModule::push_dependencies() {
         this->push_next_vld_state = true;
         this->activate_push_next_vld.notify(1, SC_NS);
     } else {
-        // std::cout << sc_time_stamp() << " FINISH LOAD ID=" << current->get_pc() << " (AXI Phase 2)" << std::endl;
 
         if (result_data != nullptr)
             delete result_data;
@@ -190,7 +189,6 @@ void LoadModule::push_dependencies() {
 
 void LoadModule::dependencies_pushed() {
     if (!current->get_push_next() || (current->get_push_next() && this->did_push_next)) {
-        // std::cout << sc_time_stamp() << " FINISH LOAD ID=" << current->get_pc() << std::endl;
 
         if (result_data != nullptr)
             delete result_data;
@@ -213,12 +211,10 @@ void LoadModule::dependencies_pushed() {
 
 // write signals
 void LoadModule::activate_push_next_vld_handler() {
-    // std::cout << sc_time_stamp() << " LOAD 2 PUSH_NEXT_QUEUE VLD=" << this->push_next_vld_state << std::endl;
     this->push_next_vld.write(this->push_next_vld_state);
 }
 
 void LoadModule::activate_push_next_end_handler() {
-    // std::cout << sc_time_stamp() << " LOAD 2 PUSH_NEXT_QUEUE VLD=" << this->push_next_vld_state << std::endl;
     this->push_next_end.write(this->push_next_end_state);
     
     if (this->push_next_end_state) {
@@ -232,7 +228,6 @@ void LoadModule::activate_push_next_end_handler() {
 }
 
 void LoadModule::activate_pull_next_rdy_handler() { //
-    // std::cout << sc_time_stamp() << " LOAD 2 PULL_NEXT_QUEUE RDY=" << this->pull_next_rdy_state << std::endl;
     this->pull_next_rdy.write(this->pull_next_rdy_state);
     if (this->pull_next_rdy_state) {
         read_pull_next_data.notify(1, SC_NS);
@@ -250,7 +245,6 @@ void LoadModule::pull_next_vld_handler() { //
 }
 
 void LoadModule::read_pull_next_data_handler() { //
-    // std::cout << sc_time_stamp() << " LOAD RECEIVE DATA " << this->pull_next_data.read() << std::endl;
     this->next_data = new sc_int<64>(this->pull_next_data.read());
 }
 
@@ -266,14 +260,13 @@ void LoadModule::push_next_rdy_handler() {
 }
 
 void LoadModule::write_push_next_data_handler() {
-    // std::cout << sc_time_stamp() << " LOAD SEND DATA " << this->current->id << std::endl;
     this->push_next_data.write(this->current->get_pc());
     
     this->push_next_end_state = true;
     this->activate_push_next_end.notify(1, SC_NS);
 }
 
-// Phase 2: process_axi_read_fsm
+// AXI read FSM handling LOAD INP and LOAD WGT instructions.
 void LoadModule::process_axi_read_fsm() {
     if (!ARESETN.read()) {
         axi_state.write(l_idle);

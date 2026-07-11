@@ -22,7 +22,7 @@ public:
     sc_out<bool> push_next_end;
 
     // =========================================================================
-    // --- STAGE 2: AXI HARDWARE INTEGRATION PORTS ---
+    // --- AXI HARDWARE INTEGRATION PORTS ---
     // The following ports allow this LoadModule to act as an AXI Master.
     // It will request data from the shared Arbiter/Memory across the bus.
     // =========================================================================
@@ -85,7 +85,7 @@ public:
 
 private:
 
-    // Phase 2: AXI SC_METHOD handlers for LOAD INP and LOAD WGT
+    // AXI SC_METHOD handlers for LOAD INP and LOAD WGT
     enum load_axi_state { l_idle, l_inp_addr, l_inp_data, l_wgt_addr, l_wgt_data };
     sc_signal<load_axi_state, SC_MANY_WRITERS> axi_state;
 
